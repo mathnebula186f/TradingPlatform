@@ -4,6 +4,10 @@ version = "1.0.0"
 authors = []
 
 [addresses]
+ContractAddr = "00f836ff699e740361d48a673d581fd5f81f70f225c1958332f51adce6aeca26"
+std = "0x1"
+aptos_framework = "0x1"
+aptos_token = "0x3"
 
 [dev-addresses]
 
