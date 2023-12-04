@@ -1,13 +1,10 @@
 [package]
-name = "tradingPlatform"
+name = "TradingPlatform"
 version = "1.0.0"
 authors = []
 
 [addresses]
-ContractAddr = "00f836ff699e740361d48a673d581fd5f81f70f225c1958332f51adce6aeca26"
-std = "0x1"
-aptos_framework = "0x1"
-aptos_token = "0x3"
+ContractAddr = "0xe5f8ca3d03b48d89d88b5224d15ba5d0b191abdb1dcde8d447f91ce4f9dc394e"
 
 [dev-addresses]
 

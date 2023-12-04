@@ -7,15 +7,9 @@ import { useState, useEffect } from "react";
 
 import "@aptos-labs/wallet-adapter-ant-design/dist/index.css";
 
-export const provider = new Provider(Network.LOCAL);
-export const moduleAddress = "0x00f836ff699e740361d48a673d581fd5f81f70f225c1958332f51adce6aeca26";
-
-type Task = {
-	address: string;
-	completed: boolean;
-	content: string;
-	task_id: string;
-};
+export const provider = new Provider(Network.DEVNET);
+export const moduleAddress = "0xe66797e7870e9572b235a961447f649147ccf2f91ebdb22c3272ab0526eb381a";
+export const moduleName = "TradingPlatform";
 
 function App() {
 	const { account } = useWallet();
@@ -24,8 +18,6 @@ function App() {
 	const [transactionInProgress, setTransactionInProgress] = useState<boolean>(false);
 	const [price, setPrice] = useState<number>(0);
 	const [units, setUnits] = useState<number>(0);
-	// const [tasks, setTasks] = useState<Task[]>([]);
-	// const [newTask, setNewTask] = useState<string>("");
 
 	// const onWriteTask = (event: React.ChangeEvent<HTMLInputElement>) => {
 	// 	const value = event.target.value;
@@ -103,7 +95,7 @@ function App() {
 		try {
 			const UserResource = await provider.getAccountResource(
 				account.address,
-				`${moduleAddress}::contract::UserResource`
+				`${moduleAddress}::${moduleName}::UserResource`
 			);
 			console.log(UserResource)
 			setUserRegistered(true);
@@ -119,7 +111,7 @@ function App() {
 		// build a transaction payload to be submited
 		const payload = {
 			type: "entry_function_payload",
-			function: `${moduleAddress}::contract::register`,
+			function: `${moduleAddress}::${moduleName}::register`,
 			type_arguments: [],
 			arguments: [],
 		};
@@ -146,13 +138,14 @@ function App() {
 		// build a transaction payload to be submited
 		const payload = {
 			type: "entry_function_payload",
-			function: `${moduleAddress}::contract::sell_request`,
+			function: `${moduleAddress}::${moduleName}::sell_request`,
 			type_arguments: [],
 			arguments: [price,units],
 		};
+		console.log(typeof price, typeof units);
 		try {
 			const response = await wallet.signAndSubmitTransaction(payload);
-			console.log(response)
+			// console.log(response)
 			await provider.waitForTransaction(response.hash);
 			setUserRegistered(true);
 		} catch (error: any) {
