@@ -1,14 +1,15 @@
 import { Layout, Row, Col, Button, Spin, List, Checkbox, Input} from "antd";
 import type {CheckboxChangeEvent} from "antd/es/checkbox"
-import { WalletSelector } from "@aptos-labs/wallet-adapter-ant-design";
 import { Provider, Network } from "aptos";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { useState, useEffect } from "react";
 
 import "@aptos-labs/wallet-adapter-ant-design/dist/index.css";
 
+import Navbar from "./components/Navbar";
+
 export const provider = new Provider(Network.DEVNET);
-export const moduleAddress = "0xe66797e7870e9572b235a961447f649147ccf2f91ebdb22c3272ab0526eb381a";
+export const moduleAddress = "0xf47fe7581a575205d4b6b08d95e84b96725fdb93dfb112691660c9a133eeb312";
 export const moduleName = "TradingPlatform";
 
 function App() {
@@ -157,18 +158,7 @@ function App() {
 	};
 	return (
 		<>
-			<Layout>
-				<Row align="middle">
-					<Col span={10} offset={2}>
-						<h1>Our todolist</h1>
-					</Col>
-					<Col span={12} style={{ textAlign: "right", paddingRight: "200px" }} >
-						<Col span={12} style={{ textAlign: "right", paddingRight: "200px" }} offset={16}>
-							<WalletSelector />
-						</Col>
-					</Col>
-				</Row>
-			</Layout>
+			<Navbar/>
 			<Spin spinning={transactionInProgress}>
 				{!userRegistered ? (
 					<Row gutter={[0, 32]} style={{ marginTop: "2rem" }}>
