@@ -455,9 +455,9 @@ module ContractAddr::OrderHeap {
 			if (right < len) {
 				let rightVal = vector::borrow(&heap.arr, right);
 				let bestVal = vector::borrow(&heap.arr, best);
-				if (heap.type == MAX_HEAP && Order::price(rightVal) < Order::price(bestVal)) {
+				if (heap.type == MIN_HEAP && Order::price(rightVal) < Order::price(bestVal)) {
 					best = right;
-				} else if (heap.type == MIN_HEAP && Order::price(rightVal) > Order::price(bestVal)) {
+				} else if (heap.type == MAX_HEAP && Order::price(rightVal) > Order::price(bestVal)) {
 					best = right;
 				}
 			};
@@ -478,6 +478,7 @@ module ContractAddr::OrderHeap {
 		let root = 0u64;
 
 		heapify(heap, root);
+		// debug::print(heap);
 	}
 
 	#[test(user = @ContractAddr)]
@@ -528,8 +529,33 @@ module ContractAddr::OrderHeap {
 	}
 
 	#[test(user = @ContractAddr)]
-	fun test_remove_from_empty_heap(user: signer) {
+	fun test_match_function_when_possible(user: signer) {
+		Order::initialize(&user);
 
+		let minHeap = MinHeap();
+
+		let (order, _) = Order::generateOrder(10, 5, Order::Sell(), @ContractAddr);
+		insert(&mut minHeap, order);
+		let (order, _) = Order::generateOrder(11, 5, Order::Sell(), @ContractAddr);
+		insert(&mut minHeap, order);
+		let (order, _) = Order::generateOrder(13, 5, Order::Sell(), @ContractAddr);
+		insert(&mut minHeap, order);
+		let (order, _) = Order::generateOrder(15, 5, Order::Sell(), @ContractAddr);
+		insert(&mut minHeap, order);
+
+		let (order, _) = Order::generateOrder(12, 6, Order::Buy(), @ContractAddr);
+		let (units, orders) = match(&mut minHeap, &order);
+
+		assert!(units == 10u64, 0u64);
+		assert!(vector::length(&orders) == 2u64, 1u64);
+		
+		let firstMatch = vector::borrow(&orders, 0);
+		assert!(Order::price(firstMatch) == 10u64, 2u64);
+		assert!(Order::units(firstMatch) == 5u64, 3u64);
+
+		let secondMatch = vector::borrow(&orders, 1);
+		assert!(Order::price(secondMatch) == 11u64, 4u64);
+		assert!(Order::units(secondMatch) == 5u64, 5u64);
 	}
 }
 
