@@ -3,7 +3,7 @@ import { Layout, Button, Drawer } from "antd";
 import LeftMenu from "./LeftMenu";
 import RightMenu from "./RightMenu";
 import { MenuFoldOutlined } from "@ant-design/icons";
-import { useLocation } from "react-router-dom";
+import { useLocation, Link } from "react-router-dom";
 import "./navbar.css";
 
 function Navbar() {
@@ -30,7 +30,7 @@ function Navbar() {
       <Layout>
         <Layout.Header className="nav-header">
           <div className="logo">
-            <h3 className="brand-font">OurToDoList</h3>
+            <Link to="/"><h3 className="brand-font">OurToDoList</h3></Link>
           </div>
           <div className="navbar-menu">
             <div className="leftMenu">

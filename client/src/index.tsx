@@ -1,4 +1,6 @@
 import React from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import ProfilePage from './components/ProfilePage';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
@@ -12,7 +14,12 @@ const root = ReactDOM.createRoot(
 );
 root.render(
 	<AptosWalletAdapterProvider plugins={wallets} autoConnect={false}>
-		<App />
+		<BrowserRouter>
+			<Routes>
+				<Route path="/" element={<App />} />
+				<Route path="/profile" element={<ProfilePage />} />
+			</Routes>
+		</BrowserRouter>
 	</AptosWalletAdapterProvider>
 );
 

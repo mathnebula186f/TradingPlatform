@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 
 import "@aptos-labs/wallet-adapter-ant-design/dist/index.css";
 
-import Navbar from "./components/Navbar";
+import Navbar from "./components/Navbar/Navbar";
 
 export const provider = new Provider(Network.DEVNET);
 export const moduleAddress = "0xf47fe7581a575205d4b6b08d95e84b96725fdb93dfb112691660c9a133eeb312";
@@ -19,7 +19,7 @@ function App() {
 	const [transactionInProgress, setTransactionInProgress] = useState<boolean>(false);
 	const [price, setPrice] = useState<number>(0);
 	const [units, setUnits] = useState<number>(0);
-
+	console.log(account);
 	// const onWriteTask = (event: React.ChangeEvent<HTMLInputElement>) => {
 	// 	const value = event.target.value;
 	// 	setNewTask(value);
