@@ -61,7 +61,7 @@ module ContractAddr::TradingPlatform {
 			signer::address_of(seller),
 		);
 
-		DummyCoin::transfer(seller, @ContractAddr, units);
+		// DummyCoin::transfer(seller, @ContractAddr, units);
 
 		/**
 		*		TODO
@@ -563,6 +563,7 @@ module ContractAddr::OrderHeap {
 
 module ContractAddr::DummyCoin {
 	use aptos_framework::managed_coin;
+	use aptos_framework::coin;
 
 	struct DummyCoin {}
 
@@ -576,7 +577,7 @@ module ContractAddr::DummyCoin {
 	
     // Transfer coins from one user to another
     public entry fun transfer(sender: &signer, recipient: address, amount: u64) {
-        managed_coin::transfer<DummyCoin>(sender, recipient, amount);
+        coin::transfer<DummyCoin>(sender, recipient, amount);
     }
 
 	/**
