@@ -235,6 +235,8 @@ module ContractAddr::Order {
 	#[test_only]
 	friend ContractAddr::OrderHeap;
 
+	use aptos_framework::timestamp;
+
 	const BUY: u8 = 0u8;
 	const SELL: u8 = 1u8;
 
@@ -266,6 +268,7 @@ module ContractAddr::Order {
 		price: u64,
 		units: u64,
 		bidder: address,
+		timestamp: u64,
 		type: u8,
 		state: u8
 	}
@@ -299,7 +302,8 @@ module ContractAddr::Order {
 			price,
 			units,
 			bidder,
-			type,
+			timestamp: timestamp::now_microseconds(),
+			type, 
 			state: ACTIVE
 		}, id)
 	}
@@ -328,6 +332,10 @@ module ContractAddr::Order {
 
 	public fun type(order: &Order): (u8) {
 		order.type
+	}
+
+	public fun time(order: &Order): (u64) {
+		order.timestamp
 	}
 
 	#[test_only]
