@@ -545,4 +545,9 @@ module ContractAddr::DummyCoin {
 	public entry fun mint(admin: &signer, destination: address) {
 		managed_coin::mint<DummyCoin>(admin, destination, 10);
 	}
+	
+    // Transfer coins from one user to another
+    public entry fun transfer(sender: &signer, recipient: address, amount: u64) {
+        managed_coin::transfer<DummyCoin>(sender, recipient, amount);
+    }
 }
