@@ -61,6 +61,8 @@ module ContractAddr::TradingPlatform {
 			signer::address_of(seller),
 		);
 
+		DummyCoin::transfer(seller, @ContractAddr, units);
+
 		/**
 		*		TODO
 		*
@@ -576,4 +578,37 @@ module ContractAddr::DummyCoin {
     public entry fun transfer(sender: &signer, recipient: address, amount: u64) {
         managed_coin::transfer<DummyCoin>(sender, recipient, amount);
     }
+
+	/**
+ * Test function for transfer functionality in DummyCoin module
+ */
+#[test(user = @ContractAddr)]
+fun test_transfer(user: signer) {
+    // Initialize the DummyCoin module
+    DummyCoin::init_module(&user);
+
+    // Create two users
+    let user1: signer;
+    let user2: signer;
+
+    // Mint some DummyCoins to user1
+    DummyCoin::mint(&user, signer::address_of(&user1));
+
+    // Check the initial balances
+    let balance_user1_before = managed_coin::balance<DummyCoin>(signer::address_of(&user1));
+    let balance_user2_before = managed_coin::balance<DummyCoin>(signer::address_of(&user2));
+
+    // Transfer some DummyCoins from user1 to user2
+    let transfer_amount: u64 = 5;
+    DummyCoin::transfer(&user1, signer::address_of(&user2), transfer_amount);
+
+    // Check the final balances
+    let balance_user1_after = managed_coin::balance<DummyCoin>(signer::address_of(&user1));
+    let balance_user2_after = managed_coin::balance<DummyCoin>(signer::address_of(&user2));
+
+    // Assert the correctness of the transfer
+    assert!(balance_user1_before == (balance_user1_after + transfer_amount), 0u64);
+    assert!(balance_user2_before == (balance_user2_after - transfer_amount), 1u64);
+}
+
 }
