@@ -5,8 +5,6 @@ authors = []
 
 [addresses]
 ContractAddr = "0xfcb48b0167d6c03f20fb227cf9cf02c5269a1439b6598a69886ae4e799aea7d6"
-user1 = "0x7c715b03823e680830200999675f6b5e28c7014f3f544b6ea2394cb0df875644"
-user2 = "0x12130d2505333ce8d20c55ab8dacce6eb5f9c21fd74c0e20828aaa943d7183ba"
 
 [dev-addresses]
 
