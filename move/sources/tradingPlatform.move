@@ -342,6 +342,8 @@ module ContractAddr::Order {
 
 	#[test_only]
 	public(friend) fun initialize(user: &signer) {
+		let framework = aptos_framework::account::create_account_for_test(@aptos_framework);
+		timestamp::set_time_has_started_for_testing(&framework);
 		init_module(user);
 	}
 }
@@ -572,6 +574,8 @@ module ContractAddr::OrderHeap {
 module ContractAddr::DummyCoin {
 	use aptos_framework::managed_coin;
 	use aptos_framework::coin;
+	#[test_only]
+	use std::signer;
 
 	struct DummyCoin {}
 
@@ -579,8 +583,12 @@ module ContractAddr::DummyCoin {
 		managed_coin::initialize<DummyCoin>(admin, b"DummyCoin", b"DCOIN", 8, true);
 	}
 
-	public entry fun mint(admin: &signer, destination: address) {
-		managed_coin::mint<DummyCoin>(admin, destination, 10);
+	public entry fun mint(admin: &signer, destination: address, amount: u64) {
+		managed_coin::mint<DummyCoin>(admin, destination, amount);
+	}
+
+	public entry fun register(user: &signer) {
+		managed_coin::register<DummyCoin>(user);
 	}
 	
     // Transfer coins from one user to another
@@ -588,36 +596,39 @@ module ContractAddr::DummyCoin {
         coin::transfer<DummyCoin>(sender, recipient, amount);
     }
 
-	/**
- * Test function for transfer functionality in DummyCoin module
- */
-#[test(user = @ContractAddr)]
-fun test_transfer(user: signer) {
-    // Initialize the DummyCoin module
-    DummyCoin::init_module(&user);
 
-    // Create two users
-    let user1: signer;
-    let user2: signer;
+	#[test_only]
+	fun initialize_account(admin: &signer, user: address, balance: u64) : signer {
+		let s = aptos_framework::account::create_account_for_test(user);
+		register(&s);
+		mint(admin, signer::address_of(&s), balance);
+		s
+	}
 
-    // Mint some DummyCoins to user1
-    DummyCoin::mint(&user, signer::address_of(&user1));
+	#[test(admin = @ContractAddr)]
+	fun test_transfer(admin:signer) {
+		// Initialize the DummyCoin module
+		init_module(&admin);
 
-    // Check the initial balances
-    let balance_user1_before = managed_coin::balance<DummyCoin>(signer::address_of(&user1));
-    let balance_user2_before = managed_coin::balance<DummyCoin>(signer::address_of(&user2));
+		// Create two users
+		let user1 = initialize_account(&admin, @0xC0FFEE, 10);
+		let user2 = initialize_account(&admin, @0xF00, 0);
 
-    // Transfer some DummyCoins from user1 to user2
-    let transfer_amount: u64 = 5;
-    DummyCoin::transfer(&user1, signer::address_of(&user2), transfer_amount);
+		// Check the initial balances
+		let balance_user1_before = coin::balance<DummyCoin>(signer::address_of(&user1));
+		let balance_user2_before = coin::balance<DummyCoin>(signer::address_of(&user2));
 
-    // Check the final balances
-    let balance_user1_after = managed_coin::balance<DummyCoin>(signer::address_of(&user1));
-    let balance_user2_after = managed_coin::balance<DummyCoin>(signer::address_of(&user2));
+		// Transfer some DummyCoins from user1 to user2
+		let transfer_amount: u64 = 5;
+		transfer(&user1, signer::address_of(&user2), transfer_amount);
 
-    // Assert the correctness of the transfer
-    assert!(balance_user1_before == (balance_user1_after + transfer_amount), 0u64);
-    assert!(balance_user2_before == (balance_user2_after - transfer_amount), 1u64);
-}
+		// Check the final balances
+		let balance_user1_after = coin::balance<DummyCoin>(signer::address_of(&user1));
+		let balance_user2_after = coin::balance<DummyCoin>(signer::address_of(&user2));
+
+		// Assert the correctness of the transfer
+		assert!(balance_user1_before == (balance_user1_after + transfer_amount), 0u64);
+		assert!(balance_user2_before == (balance_user2_after - transfer_amount), 1u64);
+	}
 
 }
