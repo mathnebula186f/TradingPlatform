@@ -1,30 +1,43 @@
 /**
 * Module that will hold all the platform APIs
 */
-module ContractAddr::TradingPlatform {
+module resource_account::trading_platform {
 	use std::signer;
 	use std::vector;
-	use ContractAddr::Order;
-	use ContractAddr::OrderHeap::{Self, OrderHeap};
-	use aptos_framework::table::{Self, Table};
+	use resource_account::order::{Self, OrderHeap};
+	use aptos_framework::account;
+	use aptos_framework::aptos_coin::AptosCoin;
+	use resource_account::dummy_coin::DummyCoin;
+	use resource_account::constants;
+
+	#[test_only]
+	use resource_account::dummy_coin;
 
 	const E_NOT_REGISTERED: u64 = 5;
 
 	struct ContractStorage has key {
+		signer_cap: account::SignerCapability,
 		sellOrders : OrderHeap,					//	Only active sell orders
 		buyOrders : OrderHeap,					//	Only active buy orders
-		orderTable: Table<u64, Order::Order>	//	All orders including cancelled
+		lastPrice: u64,
 	}
 
 	struct UserResource has key, drop {	
 		activeOrders: vector<u64>
 	}
 
-	entry fun init_module(sender: &signer) {
-		move_to(sender,  ContractStorage {
-			sellOrders: OrderHeap::MinHeap(),
-			buyOrders: OrderHeap::MaxHeap(),
-			orderTable: table::new<u64, Order::Order>()
+	entry fun init_module(admin: &signer) {
+		let signer_cap = aptos_framework::resource_account::retrieve_resource_account_cap(admin, @publisher_addr);
+		let sig = &account::create_signer_with_capability(&signer_cap);
+
+		aptos_framework::coin::register<AptosCoin>(sig);
+		aptos_framework::coin::register<DummyCoin>(sig);
+
+		move_to(admin, ContractStorage {
+			signer_cap: signer_cap,
+			sellOrders: order::MinHeap(),
+			buyOrders: order::MaxHeap(),
+			lastPrice: 0u64,
 		});
 	}
 
@@ -33,7 +46,7 @@ module ContractAddr::TradingPlatform {
 	*	creating a resource under
 	*	his address
 	*/
-	entry fun register(sender: &signer) {
+	public entry fun register(sender: &signer) {
 		let user_resource = UserResource {
 			activeOrders: vector::empty<u64>()
 		};
@@ -41,594 +54,418 @@ module ContractAddr::TradingPlatform {
 		move_to(sender, user_resource);
 	}
 
-	fun check_registration(user: &signer) {
-		let registered: bool = exists<UserResource>(signer::address_of(user));
-		assert!(registered, E_NOT_REGISTERED);
-	}
-
 	/**
 	*	Add a new sell request
 	*	for the seller
 	*/
-	entry fun sell_request(seller: &signer, price: u64, units: u64) acquires ContractStorage, UserResource {
+	public entry fun sell_request(seller: &signer, price: u64, units: u64, flexible: bool) acquires ContractStorage, UserResource {
 		check_registration(seller);
-
-	//	Get a new order
-		let (order, id) = Order::generateOrder(
+		let contractStore = borrow_global_mut<ContractStorage>(@resource_account);
+		let userStore = borrow_global_mut<UserResource>(signer::address_of(seller));
+	
+		//	Get a new order
+		let id = order::newOrder(
 			price,
 			units,
-			Order::Sell(),
 			signer::address_of(seller),
+			constants::Sell(),
+			flexible,
+			constants::Active(),
 		);
 
-		// DummyCoin::transfer(seller, @ContractAddr, units);
+		//	Transfer the Dummy dummy_coin to Resource Account
+		aptos_framework::coin::transfer<DummyCoin>(seller, @resource_account, units);
+	
+		//	Fullfill the order if possible
+		let counter_heap = &mut contractStore.buyOrders;
+		let (matchedUnits, matches) = order::heap_match(counter_heap, id);
+		if (matchedUnits >= units) {
+			order::set_state(id, constants::Fulfilled());
+			vector::for_each_ref(&matches, |matched_order| {
+				let order_id = *matched_order;
 
-		/**
-		*		TODO
-		*
-		*	Highest Buy price ?? 
-		*  if (highestBuyPrice < sellPrice) {
-		*		addToActiveOrderHeap;
-		* 	} else {
-		*		DoTransaction;
-		* 		RemoveBuyOrderFromActive;
-		* 		AddToFulfilledOrders;
-		*	}
-		*/
+				execute_trade(
+					order::from(order_id),
+					signer::address_of(seller),
+					order::price(order_id),
+					order::units(order_id),
+					contractStore
+				);
+			
+				//	Change in global table
+				order::set_state(order_id, constants::Fulfilled());
+			});
+			if (matchedUnits > units) {
+				order::set_state(vector::pop_back(&mut matches), constants::Fulfilled());
+			}
+		} else if (flexible && matchedUnits != 0) {
+			order::set_state(id, constants::Partial());
+			vector::for_each_ref(&matches, |matched_order| {
+				let order_id = *matched_order;
 
-	//	Add the orderId to the user list
-		let userStore = borrow_global_mut<UserResource>(signer::address_of(seller));
+				execute_trade(
+					order::from(order_id),
+					signer::address_of(seller),
+					order::price(order_id),
+					order::units(order_id),
+					contractStore
+				);
+			
+				//	Change in global table
+				order::set_state(order_id, constants::Fulfilled());
+			});
+			order::set_units(id, units - matchedUnits);
+			order::heap_insert(&mut contractStore.sellOrders, id);
+		} else {
+			vector::for_each_ref(&matches, |id_ref| {
+				order::heap_insert(counter_heap, *id_ref);
+			});
+			order::heap_insert(&mut contractStore.sellOrders, id);
+		};
+
+		//	Add the order's ID to the user's list
 		vector::push_back(&mut userStore.activeOrders, id);
-
-	//	Add the order to active sellOrders heap as well as the permanent orderTable
-		let contractStore = borrow_global_mut<ContractStorage>(@ContractAddr);
-		table::add(&mut contractStore.orderTable, id, copy order);
-		OrderHeap::insert(&mut contractStore.sellOrders, copy order);
 	}
 
 	/**
 	*	Add a new buy request
 	*	for the buyer
 	*/
-	entry fun buy_request(buyer: &signer, price: u64, units: u64) acquires ContractStorage, UserResource {
+	public entry fun buy_request(buyer: &signer, price: u64, units: u64, flexible: bool) acquires ContractStorage, UserResource {
 		check_registration(buyer);
-
-	//	Get a new order
-		let (order, id) = Order::generateOrder(
+		let contractStore = borrow_global_mut<ContractStorage>(@resource_account);
+		let userStore = borrow_global_mut<UserResource>(signer::address_of(buyer));
+	
+		//	Get a new order
+		let id = order::newOrder(
 			price,
 			units,
-			Order::Buy(),
 			signer::address_of(buyer),
+			constants::Buy(),
+			flexible,
+			constants::Active(),
 		);
 
-		/**
-		*		TODO
-		*
-		*	Highest Buy price ?? 
-		*  if (lowestSellPrice > buyPrice) {
-		*		addToActiveOrderHeap;
-		* 	} else {
-		*		DoTransaction;
-		* 		RemoveSellOrderFromActive;
-		* 		AddToFulfilledOrders;
-		*	}
-		*/
+		//	Transfer the Dummy dummy_coin to Resource Account
+		aptos_framework::coin::transfer<AptosCoin>(buyer, @resource_account, price*units);
+	
+		//	Fullfill the order if possible
+		let counter_heap = &mut contractStore.sellOrders;
+		let (matchedUnits, matches) = order::heap_match(counter_heap, id);
+		if (matchedUnits >= units) {
+			order::set_state(id, constants::Fulfilled());
+			vector::for_each_ref(&matches, |matched_order| {
+				let order_id = *matched_order;
 
-	//	Add the orderId to the user list
-		let userStore = borrow_global_mut<UserResource>(signer::address_of(buyer));
+				execute_trade(
+					order::from(order_id),
+					signer::address_of(buyer),
+					order::price(order_id),
+					order::units(order_id),
+					contractStore
+				);
+
+				let leftover = (price - order::price(order_id))*order::units(order_id);
+				if (leftover > 0) {
+					transfer<AptosCoin>(signer::address_of(buyer), leftover, contractStore);
+				};
+			
+				//	Change in global table
+				order::set_state(order_id, constants::Fulfilled());
+			});
+			if (matchedUnits > units) {
+				order::set_state(vector::pop_back(&mut matches), constants::Fulfilled());
+			}
+		} else if (flexible && matchedUnits != 0) {
+			order::set_state(id, constants::Partial());
+			vector::for_each_ref(&matches, |matched_order| {
+				let order_id = *matched_order;
+
+				execute_trade(
+					order::from(order_id),
+					signer::address_of(buyer),
+					order::price(order_id),
+					order::units(order_id),
+					contractStore
+				);
+
+				let leftover = (price - order::price(order_id))*order::units(order_id);
+				if (leftover > 0) {
+					transfer<AptosCoin>(signer::address_of(buyer), leftover, contractStore);
+				};
+			
+				//	Change in global table
+				order::set_state(order_id, constants::Fulfilled());
+			});
+			order::set_units(id, units - matchedUnits);
+			order::heap_insert(&mut contractStore.buyOrders, id);
+		} else {
+			vector::for_each_ref(&matches, |id_ref| {
+				order::heap_insert(counter_heap, *id_ref);
+			});
+			order::heap_insert(&mut contractStore.buyOrders, id);
+		};
+
+		//	Add the order's ID to the user's list
 		vector::push_back(&mut userStore.activeOrders, id);
-
-	//	Add the order to active buyOrders heap as well as the permanent orderTable
-		let contractStore = borrow_global_mut<ContractStorage>(@ContractAddr);
-		table::add(&mut contractStore.orderTable, id, copy order);
-		OrderHeap::insert(&mut contractStore.buyOrders, copy order);
 	}
 
 	/**
 	*	Cancel a previuously made
 	*	request by the user
 	*/
-	entry fun cancel_request(user: &signer, order_id: u64) acquires ContractStorage, UserResource {
+	public entry fun cancel_request(user: &signer, order_id: u64) acquires ContractStorage, UserResource {
 		check_registration(user);
-	//	Grab all mutable references
-		let storage = borrow_global_mut<ContractStorage>(@ContractAddr);
+		//	Grab all global stores
+		let storage = borrow_global_mut<ContractStorage>(@resource_account);
 		let userStore = borrow_global_mut<UserResource>(signer::address_of(user));
 
-	//	Grab and remove the order_id from user's activeOrders list
-		let (present, idx) = vector::index_of(&userStore.activeOrders, &order_id);
-		assert!(present, 0u64);
+		//	Grab and remove the order_id from user's activeOrders list
+		let (_, idx) = vector::index_of(&userStore.activeOrders, &order_id);
 		vector::swap_remove(&mut userStore.activeOrders, idx);
+
+		//	Change Order's state to cancelled
+		order::set_state(order_id, constants::Cancelled());
+
+		//	Return the token back to user
+		if (order::type(order_id) == constants::Buy())
+			transfer<AptosCoin>(signer::address_of(user), order::price(order_id) * order::units(order_id), storage)
+		else
+			transfer<DummyCoin>(signer::address_of(user), order::units(order_id), storage)
+		;
+	}
+
+	fun check_registration(user: &signer) {
+		let registered: bool = exists<UserResource>(signer::address_of(user));
+		assert!(registered, E_NOT_REGISTERED);
+	}
+
+	fun transfer<T>(to: address, amount: u64, storage: &ContractStorage) {
+		let resource_signer = &account::create_signer_with_capability(&storage.signer_cap);
+		aptos_framework::coin::transfer<T>(resource_signer, to, amount);
+	}
+
+	fun execute_trade(buyer: address, seller: address, price: u64, units: u64, storage: &ContractStorage) {
+		let apt_transfer_amount = price * units;
+		let dummy_transfer_amount = units;
+
+		//	Execute
+		transfer<AptosCoin>(seller, apt_transfer_amount, storage);
+		transfer<DummyCoin>(buyer, dummy_transfer_amount, storage);
+	}
+
+	#[test_only]
+	fun initialize_module(admin: &signer) {
+		let publisher_sig = &create_user_with_address(@publisher_addr);
+		aptos_framework::resource_account::create_resource_account(publisher_sig, vector::empty(), vector::empty());
+		init_module(admin);
+	}
+
+	#[test_only]
+	public fun make_sell_request(user: &signer, price: u64, units: u64, flexible: bool) acquires ContractStorage, UserResource {
+
+		let user_addr = signer::address_of(user);
+
+		let before_len = vector::length(&borrow_global<UserResource>(user_addr).activeOrders);
+		let before_bal = aptos_framework::coin::balance<DummyCoin>(user_addr);
+
+		sell_request(user, price, units, flexible);
 		
-	//	Grab the order from Contract's OrderTable
-		let order = table::borrow_mut(&mut storage.orderTable, order_id);
-		assert!(Order::state(order) == Order::Active(), 1u64);
+		let after_len = vector::length(&borrow_global<UserResource>(signer::address_of(user)).activeOrders);
+		assert!(before_len + 1 == after_len, 0u64);
 
-	//	Remove order from Contract's ActiveOrders heap
-		let heap = if (Order::type(order) == Order::Buy()) &mut storage.buyOrders else &mut storage.sellOrders ;
-		OrderHeap::remove(heap, order);
-
-	//	Change Order's state to cancelled
-		Order::set_state(order, Order::Cancelled());
+		let after_bal = aptos_framework::coin::balance<DummyCoin>(user_addr);
+		assert!(before_bal - units == after_bal, 1u64);
 	}
 
 	#[test_only]
-	fun initialize_all(user: &signer) {
-		init_module(user);
-		Order::initialize(user);
+	public fun sell_request_cancel(user: &signer, id: u64) acquires ContractStorage, UserResource {
+		let user_addr = signer::address_of(user);
+
+		let before_len = vector::length(&borrow_global<UserResource>(user_addr).activeOrders);
+		let before_bal = aptos_framework::coin::balance<DummyCoin>(user_addr);
+		
+		cancel_request(user, id);
+
+		let after_len = vector::length(&borrow_global<UserResource>(signer::address_of(user)).activeOrders);
+		assert!(before_len - 1 == after_len, 0u64);
+
+		let after_bal = aptos_framework::coin::balance<DummyCoin>(user_addr);
+		assert!(before_bal + order::units(id) == after_bal, 1u64);
 	}
 
 	#[test_only]
-	fun initialize_and_register(user: &signer) {
-		initialize_all(user);
-		register(user);
+	public fun buy_request_cancel(user: &signer, id: u64) acquires ContractStorage, UserResource {
+		let user_addr = signer::address_of(user);
+
+		let before_len = vector::length(&borrow_global<UserResource>(user_addr).activeOrders);
+		let before_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
+		
+		cancel_request(user, id);
+
+		let after_len = vector::length(&borrow_global<UserResource>(signer::address_of(user)).activeOrders);
+		assert!(before_len - 1 == after_len, 0u64);
+
+		let after_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
+		assert!(before_bal + order::price(id)*order::units(id) == after_bal, 1u64);
 	}
 
-	#[test(user = @ContractAddr)]
+	#[test_only]
+	public fun make_buy_request(user: &signer, price: u64, units: u64, flexible: bool) acquires ContractStorage, UserResource {
+
+		let user_addr = signer::address_of(user);
+
+		let before_len = vector::length(&borrow_global<UserResource>(user_addr).activeOrders);
+		let before_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
+
+		buy_request(user, price, units, flexible);
+		
+		let after_len = vector::length(&borrow_global<UserResource>(signer::address_of(user)).activeOrders);
+		assert!(before_len + 1 == after_len, 0u64);
+
+		let after_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
+		assert!(before_bal <= units*price + after_bal, 1u64);
+	}
+	
+	#[test_only]
+	public fun initialize_aptos_coin(): aptos_framework::coin::MintCapability<AptosCoin> {
+		let framework = &aptos_framework::account::create_signer_for_test(@aptos_framework);
+		let (burn, mint) = aptos_framework::aptos_coin::initialize_for_test(framework);
+		aptos_framework::coin::destroy_burn_cap(burn);
+		mint
+	}
+
+	#[test_only]
+	public fun mint_and_deposit(user: address, amount: u64, mint_cap: &aptos_framework::coin::MintCapability<AptosCoin>) {
+		let dummy_coin = aptos_framework::coin::mint(amount, mint_cap);
+		aptos_framework::coin::deposit(user, dummy_coin);
+	}
+
+	#[test_only]
+	public fun create_user_with_address(addr: address): signer {
+		let sig = aptos_framework::account::create_account_for_test(addr);
+		aptos_framework::coin::register<DummyCoin>(&sig);
+		aptos_framework::coin::register<AptosCoin>(&sig);
+		register(&sig);
+		sig
+	}
+
+	#[test_only]
+	fun fetch_order_details(user: &signer, idx: u64) : (u64, u64, u64, u8) acquires UserResource {
+		let ur = borrow_global<UserResource>(signer::address_of(user));
+		let id = *vector::borrow(&ur.activeOrders, idx);
+		(id, order::price(id), order::units(id), order::state(id))
+	}
+
+	#[test(user = @resource_account)]
 	fun test_registration_working(user: signer) {
 		register(&user);
-		check_registration(&user);
+		assert!(exists<UserResource>(signer::address_of(&user)), 0u64);
 	}
 
-	#[test(user = @ContractAddr), expected_failure(abort_code = E_NOT_REGISTERED)]
+	#[test(user = @resource_account), expected_failure(abort_code = E_NOT_REGISTERED)]
 	fun test_unregistered_user_cant_use(user: signer) {
 		check_registration(&user);
 	}
 
-	#[test(user = @ContractAddr)]
-	fun test_sell_request_working(user: signer) acquires ContractStorage, UserResource {
-		initialize_and_register(&user);
+	#[test(admin = @resource_account)]
+	fun test_sell_request_working(admin: signer) acquires ContractStorage, UserResource {
+		initialize_module(&admin);
+		order::initialize_module(&admin);
+		dummy_coin::initialize_module(&admin);
 
-		let cnt = 0;
-		sell_request(&user, 100, 2);	cnt = cnt + 1;
-		sell_request(&user, 10, 1);	cnt = cnt + 1;
-		sell_request(&user, 1000, 1);	cnt = cnt + 1;
-	
-		let userResource = borrow_global<UserResource>(signer::address_of(&user));
-		assert!(vector::length(&userResource.activeOrders) == cnt, 0u64);
-		move userResource;
+		let user = &create_user_with_address(@0xF00);
+		dummy_coin::mint(&admin, signer::address_of(user), 100);
 
-		cancel_request(&user, 1);				cnt = cnt - 1;
-
-		let userResource = borrow_global<UserResource>(signer::address_of(&user));
-		assert!(vector::length(&userResource.activeOrders) == cnt, 1u64);
-
-		let store = borrow_global<ContractStorage>(signer::address_of(&user));
-		let lowestSell = OrderHeap::head(&store.sellOrders);
-		assert!(Order::price(lowestSell) == 100u64, 2u64);
+		make_sell_request(user, 100, 10, true);
+		sell_request_cancel(user, 1);
 	}
 
-	#[test(user = @ContractAddr)]
-	fun test_buy_request_working(user: signer) acquires ContractStorage, UserResource {
-		initialize_and_register(&user);
+	#[test(admin = @resource_account)]
+	fun test_buy_request_working(admin: signer) acquires ContractStorage, UserResource {
+		initialize_module(&admin);
+		order::initialize_module(&admin);
+		dummy_coin::initialize_module(&admin);
+		let minter = initialize_aptos_coin();
 
-		let cnt = 0;
-		buy_request(&user, 100, 2);	cnt = cnt + 1;
-		buy_request(&user, 10, 1);	cnt = cnt + 1;
-		buy_request(&user, 1000, 1);	cnt = cnt + 1;
-	
-		let userResource = borrow_global<UserResource>(signer::address_of(&user));
-		assert!(vector::length(&userResource.activeOrders) == cnt, 0u64);
-		move userResource;
+		let user = &create_user_with_address(@0xF00);
+		aptos_framework::coin::register<AptosCoin>(user);
+		mint_and_deposit(signer::address_of(user), 1000, &minter);
 
-		cancel_request(&user, 2);				cnt = cnt - 1;
+		make_buy_request(user, 100, 5, false);
+		buy_request_cancel(user, 1);
 
-		let userResource = borrow_global<UserResource>(signer::address_of(&user));
-		assert!(vector::length(&userResource.activeOrders) == cnt, 1u64);
-
-		let store = borrow_global<ContractStorage>(signer::address_of(&user));
-		let largestBuy = OrderHeap::head(&store.buyOrders);
-		assert!(Order::price(largestBuy) == 100u64, 2u64);
+		aptos_framework::coin::destroy_mint_cap(minter);
 	}
 
-	#[test(user = @ContractAddr), expected_failure]
-	fun test_cancel_order_does_not_exist(user: signer) acquires ContractStorage, UserResource {
-		initialize_and_register(&user);
+	#[test(admin = @resource_account)]
+	fun test_actual_buy_order_matching(admin: signer) acquires ContractStorage, UserResource {
+		initialize_module(&admin);
+		order::initialize_module(&admin);
+		dummy_coin::initialize_module(&admin);
+		let mint_cap = initialize_aptos_coin();
 
-		cancel_request(&user, 0);
-	}
+		let buyer1 = &create_user_with_address(@0xF001);
+		let buyer2 = &create_user_with_address(@0xF002);
+		let seller1 = &create_user_with_address(@0xF003);
+		let seller2 = &create_user_with_address(@0xF004);
 
-}
+		dummy_coin::mint(&admin, signer::address_of(seller1), 10);
+		dummy_coin::mint(&admin, signer::address_of(seller2), 10);
+		mint_and_deposit(signer::address_of(buyer1), 1000, &mint_cap);
+		mint_and_deposit(signer::address_of(buyer2), 1000, &mint_cap);
 
-/**
-* Module for handling generation of Orders
-*/
-module ContractAddr::Order {
-	friend ContractAddr::TradingPlatform;
-	#[test_only]
-	friend ContractAddr::OrderHeap;
+		make_sell_request(seller1, 99, 5, false);
+		make_sell_request(seller2, 101, 2, true);
 
-	use aptos_framework::timestamp;
-
-	const BUY: u8 = 0u8;
-	const SELL: u8 = 1u8;
-
-	const ACTIVE: u8 = 0u8;
-	const FULFILLED: u8 = 1u8;
-	const CANCELLED: u8 = 2u8;
-
-	public fun Buy(): u8 {
-		BUY
-	}
-
-	public fun Sell(): u8 {
-		SELL
-	}
-
-	public fun Active(): u8 {
-		ACTIVE
-	}
-
-	public fun Fulfilled(): u8 {
-		FULFILLED
-	}
-
-	public fun Cancelled(): u8 {
-		CANCELLED
-	}
-
-	struct Order has store, drop, copy {
-		price: u64,
-		units: u64,
-		bidder: address,
-		timestamp: u64,
-		type: u8,
-		state: u8
-	}
-
-	struct Storage has key, drop {
-		id: u64
-	}
-
-	/**
-	*	Initialize the module
-	*/
-	entry fun init_module(owner: &signer) {
-		move_to(owner, Storage {
-			id: 0u64
-		});
-	}
-
-	/**
-	*	Create an instance of Order::Order
-	*/
-	public(friend) fun generateOrder(
-		price: u64,
-		units: u64,
-		type: u8,
-		bidder: address,
-	) : (Order, u64) acquires Storage {
-		let storage = borrow_global_mut<Storage>(@ContractAddr);
-		let id = storage.id;
-		storage.id = id + 1;
-		(Order {
-			price,
-			units,
-			bidder,
-			timestamp: timestamp::now_microseconds(),
-			type, 
-			state: ACTIVE
-		}, id)
-	}
-
-	/**
-	*	Getters and setters for
-	*	the Order::Order type
-	*/
-
-	public fun set_state(order: &mut Order, state: u8) {
-		assert!(state <= CANCELLED, 0u64);
-		order.state = state;
-	}
-
-	public fun price(order: &Order) : (u64) {
-		order.price
-	}
-
-	public fun units(order: &Order) : (u64) {
-		order.units
-	}
-
-	public fun state(order: &Order) : (u8) {
-		order.state
-	}
-
-	public fun type(order: &Order): (u8) {
-		order.type
-	}
-
-	public fun time(order: &Order): (u64) {
-		order.timestamp
-	}
-
-	#[test_only]
-	public(friend) fun initialize(user: &signer) {
-		let framework = aptos_framework::account::create_account_for_test(@aptos_framework);
-		timestamp::set_time_has_started_for_testing(&framework);
-		init_module(user);
-	}
-}
-
-/**
-* Module with functions for 
-* Heap of Orders
-*/
-module ContractAddr::OrderHeap {
-	use std::vector;
-	use ContractAddr::Order::{Self, Order};
-
-	const MAX_HEAP: u8 = 0;
-	const MIN_HEAP: u8 = 1;
-
-	struct OrderHeap has store, drop {
-		arr: vector<Order>,
-		type: u8
-	}
-
-	public fun MaxHeap() : (OrderHeap) {
-		OrderHeap {
-			arr: vector::empty<Order>(),
-			type: MAX_HEAP
-		}
-	}
-
-	public fun MinHeap() : (OrderHeap) {
-		OrderHeap {
-			arr: vector::empty<Order>(),
-			type: MIN_HEAP,
-		}
-	}
-
-	/**
-	*	Insert a new Order
-	*/
-	public fun insert(heap: &mut OrderHeap, order: Order) {
-		assert!(((heap.type == MAX_HEAP) || (heap.type == MIN_HEAP)), 0u64);
-		vector::push_back(&mut heap.arr, order);
-		let child = vector::length(&heap.arr)-1;
-
-		loop {
-			if (child == 0)	break;
-
-			let parent = (child-1)/2;
-			let parentVal = vector::borrow(&heap.arr, parent);
-			let childVal = vector::borrow(&heap.arr, child);
-
-			if (heap.type == MIN_HEAP && Order::price(childVal) < Order::price(parentVal)) {
-				vector::swap(&mut heap.arr, parent, child);
-				child = parent;
-			} else if (heap.type == MAX_HEAP && Order::price(childVal) > Order::price(parentVal)) {
-				vector::swap(&mut heap.arr, parent, child);
-				child = parent;
-			} else	break;
-		};
-	}
-
-	public fun match(heap: &mut OrderHeap, order: &Order) : (u64, vector<Order>) {
-		assert!(1-Order::type(order) == heap.type, 0u64);
-
-		let matched = vector::empty<Order>();
-		let offerPrice = Order::price(order);
-		let requiredUnits = Order::units(order);
-		let matchedUnits = 0u64;
-
-		loop {
-			if (matchedUnits >= requiredUnits)	break;
-
-			let head = *head(heap);
-			let bestPrice = Order::price(&head);
-
-			if (heap.type == MIN_HEAP && bestPrice <= offerPrice) {
-				matchedUnits = matchedUnits + Order::units(&head);
-				vector::push_back(&mut matched, head);
-				pop(heap);
-			} else if (heap.type == MAX_HEAP && bestPrice >= offerPrice) {
-				matchedUnits = matchedUnits + Order::units(&head);
-				vector::push_back(&mut matched, head);
-				pop(heap);
-			} else break;
-		};
-
-		(matchedUnits, matched)
-	}
-
-	/**
-	*	Return the order on top
-	*/
-	public fun head(heap: &OrderHeap): (&Order) {
-		vector::borrow(&heap.arr, 0)
-	}
-
-	public fun remove(heap: &mut OrderHeap, order: &Order) {
-		let (found, idx) = vector::index_of(&heap.arr, order);
-		if (found) {
-			vector::swap_remove(&mut heap.arr, idx);
-			heapify(heap, idx);
-		}
-	}
-
-	fun heapify(heap: &mut OrderHeap, root: u64) {
-		let parent = root;
-		let len = vector::length(&heap.arr);
-		loop {
-			let left = 2*parent + 1;
-			let right = 2*parent + 2;
-			let best = parent;
-
-			if (left < len) {
-				let leftVal = vector::borrow(&heap.arr, left);
-				let bestVal = vector::borrow(&heap.arr, best);
-				if (heap.type == MIN_HEAP && Order::price(leftVal) < Order::price(bestVal)) {
-					best = left;
-				} else if (heap.type == MAX_HEAP && Order::price(leftVal) > Order::price(bestVal)) {
-					best = left;
-				}
-			};
-
-			if (right < len) {
-				let rightVal = vector::borrow(&heap.arr, right);
-				let bestVal = vector::borrow(&heap.arr, best);
-				if (heap.type == MIN_HEAP && Order::price(rightVal) < Order::price(bestVal)) {
-					best = right;
-				} else if (heap.type == MAX_HEAP && Order::price(rightVal) > Order::price(bestVal)) {
-					best = right;
-				}
-			};
-
-			if(best != parent) {
-				vector::swap(&mut heap.arr, best, parent);
-				parent = best;
-			} else break;
-		}
-	}
-
-	/**
-	*	Remove the Order with highest or lowest price
-	*	according to min/max heap property
-	*/
-	public fun pop(heap: &mut OrderHeap) {
-		vector::swap_remove(&mut heap.arr, 0);
-		let root = 0u64;
-
-		heapify(heap, root);
-		// debug::print(heap);
-	}
-
-	#[test(user = @ContractAddr)]
-	fun test_double_add(user: signer) {
-		Order::initialize(&user);
-
-		let minHeap = MinHeap();
-		let maxHeap = MaxHeap();
-		let err = 0u64;
-
-		let (orderBig, _) = Order::generateOrder(
-			100u64,
-			1u64,
-			Order::Sell(),
-			@ContractAddr,
-		);
-		let (orderSmall, _) = Order::generateOrder(
-			10u64,
-			1u64,
-			Order::Sell(),
-			@ContractAddr,
-		);
-
-		insert(&mut minHeap, copy orderBig);
-		insert(&mut minHeap, copy orderSmall);
-
-		let h = head(&minHeap);
-		assert!(Order::price(h) == 10u64, err);
-		err = err + 1;
-		pop(&mut minHeap);
-
-		let h = head(&minHeap);
-		assert!(Order::price(h) == 100u64, err);
-		err = err + 1;
-		pop(&mut minHeap);
-
-		insert(&mut maxHeap, orderBig);
-		insert(&mut maxHeap, orderSmall);
-
-		let h = head(&maxHeap);
-		assert!(Order::price(h) == 100u64, err);
-		err = err + 1;
-		pop(&mut maxHeap);
-
-		let h = head(&maxHeap);
-		assert!(Order::price(h) == 10u64, err);
-		pop(&mut maxHeap);
-	}
-
-	#[test(user = @ContractAddr)]
-	fun test_match_function_when_possible(user: signer) {
-		Order::initialize(&user);
-
-		let minHeap = MinHeap();
-
-		let (order, _) = Order::generateOrder(10, 5, Order::Sell(), @ContractAddr);
-		insert(&mut minHeap, order);
-		let (order, _) = Order::generateOrder(11, 5, Order::Sell(), @ContractAddr);
-		insert(&mut minHeap, order);
-		let (order, _) = Order::generateOrder(13, 5, Order::Sell(), @ContractAddr);
-		insert(&mut minHeap, order);
-		let (order, _) = Order::generateOrder(15, 5, Order::Sell(), @ContractAddr);
-		insert(&mut minHeap, order);
-
-		let (order, _) = Order::generateOrder(12, 6, Order::Buy(), @ContractAddr);
-		let (units, orders) = match(&mut minHeap, &order);
-
-		assert!(units == 10u64, 0u64);
-		assert!(vector::length(&orders) == 2u64, 1u64);
+		make_buy_request(buyer1, 90, 6, true);
+		let (id, _, _, state) = fetch_order_details(buyer1, 0);
+		assert!(state == constants::Active(), 0);
 		
-		let firstMatch = vector::borrow(&orders, 0);
-		assert!(Order::price(firstMatch) == 10u64, 2u64);
-		assert!(Order::units(firstMatch) == 5u64, 3u64);
+		buy_request_cancel(buyer1, id);
+		assert!(order::state(id) == constants::Cancelled(), 1);
 
-		let secondMatch = vector::borrow(&orders, 1);
-		assert!(Order::price(secondMatch) == 11u64, 4u64);
-		assert!(Order::units(secondMatch) == 5u64, 5u64);
-	}
-}
+		make_buy_request(buyer1, 100, 6, true);
+		let (_, _, _, new_state) = fetch_order_details(buyer1, 0);
+		// std::debug::print(&new_state);
+		assert!(new_state == constants::Partial(), 2);
 
-module ContractAddr::DummyCoin {
-	use aptos_framework::managed_coin;
-	use aptos_framework::coin;
-	#[test_only]
-	use std::signer;
-
-	struct DummyCoin {}
-
-	entry fun init_module(admin: &signer) {
-		managed_coin::initialize<DummyCoin>(admin, b"DummyCoin", b"DCOIN", 8, true);
+		aptos_framework::coin::destroy_mint_cap(mint_cap);
 	}
 
-	public entry fun mint(admin: &signer, destination: address, amount: u64) {
-		managed_coin::mint<DummyCoin>(admin, destination, amount);
-	}
+	#[test(admin = @resource_account)]
+	fun test_actual_sell_order_matching(admin: signer) acquires ContractStorage, UserResource {
+		initialize_module(&admin);
+		order::initialize_module(&admin);
+		dummy_coin::initialize_module(&admin);
+		let mint_cap = initialize_aptos_coin();
 
-	public entry fun register(user: &signer) {
-		managed_coin::register<DummyCoin>(user);
-	}
-	
-    // Transfer coins from one user to another
-    public entry fun transfer(sender: &signer, recipient: address, amount: u64) {
-        coin::transfer<DummyCoin>(sender, recipient, amount);
-    }
+		let buyer1 = &create_user_with_address(@0xF001);
+		let buyer2 = &create_user_with_address(@0xF002);
+		let seller1 = &create_user_with_address(@0xF003);
+		let seller2 = &create_user_with_address(@0xF004);
+
+		dummy_coin::mint(&admin, signer::address_of(seller1), 10);
+		dummy_coin::mint(&admin, signer::address_of(seller2), 10);
+		mint_and_deposit(signer::address_of(buyer1), 1000, &mint_cap);
+		mint_and_deposit(signer::address_of(buyer2), 1000, &mint_cap);
+
+		make_buy_request(buyer1, 99, 5, true);
+		make_buy_request(buyer2, 101, 2, false);
 
 
-	#[test_only]
-	fun initialize_account(admin: &signer, user: address, balance: u64) : signer {
-		let s = aptos_framework::account::create_account_for_test(user);
-		register(&s);
-		mint(admin, signer::address_of(&s), balance);
-		s
-	}
+		make_sell_request(seller1, 105, 6, true);
+		let (id, _, _, state) = fetch_order_details(seller1, 0);
+		assert!(state == constants::Active(), 0);
+		
+		sell_request_cancel(seller1, id);
+		assert!(order::state(id) == constants::Cancelled(), 1);
 
-	#[test(admin = @ContractAddr)]
-	fun test_transfer(admin:signer) {
-		// Initialize the DummyCoin module
-		init_module(&admin);
+		make_sell_request(seller1, 100, 6, true);
+		let (_, _, _, state) = fetch_order_details(seller1, 0);
+		assert!(state == constants::Partial(), 2);
 
-		// Create two users
-		let user1 = initialize_account(&admin, @0xC0FFEE, 10);
-		let user2 = initialize_account(&admin, @0xF00, 0);
-
-		// Check the initial balances
-		let balance_user1_before = coin::balance<DummyCoin>(signer::address_of(&user1));
-		let balance_user2_before = coin::balance<DummyCoin>(signer::address_of(&user2));
-
-		// Transfer some DummyCoins from user1 to user2
-		let transfer_amount: u64 = 5;
-		transfer(&user1, signer::address_of(&user2), transfer_amount);
-
-		// Check the final balances
-		let balance_user1_after = coin::balance<DummyCoin>(signer::address_of(&user1));
-		let balance_user2_after = coin::balance<DummyCoin>(signer::address_of(&user2));
-
-		// Assert the correctness of the transfer
-		assert!(balance_user1_before == (balance_user1_after + transfer_amount), 0u64);
-		assert!(balance_user2_before == (balance_user2_after - transfer_amount), 1u64);
+		aptos_framework::coin::destroy_mint_cap(mint_cap);
 	}
 
 }
