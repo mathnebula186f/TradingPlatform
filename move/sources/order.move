@@ -6,7 +6,6 @@ module resource_account::order {
 	use std::vector;
 	use resource_account::constants;
 	use aptos_framework::table::{Self, Table};
-	#[test_only]
 	use aptos_framework::timestamp;
 
 	friend resource_account::trading_platform;
@@ -21,6 +20,7 @@ module resource_account::order {
 
 		from: address,
 		id: u64,
+		positions: vector<u64>,
 
 		type: u8,
 		flexible: bool,
@@ -38,6 +38,11 @@ module resource_account::order {
 		fixedOrders: vector<u64>,
 		flexibleOrders: vector<u64>,
 	}
+	
+	struct OrderStore has key {
+		orders: Table<u64, Order>,
+		id: u64,
+	}
 
 	public fun MaxHeap() : (OrderHeap) {
 		OrderHeap {
@@ -53,24 +58,20 @@ module resource_account::order {
 		}
 	}
 
-	struct HeapStorage has key {
-		orders: Table<u64, Order>,
-		id: u64,
-	}
-
 	entry fun init_module(admin: &signer) {
 		let order_table = table::new<u64, Order>();
 		table::add(&mut order_table, 0, Order {
 			price: 0,
 			units: 0,
 			from: @0x0,
+			positions: vector::empty<u64>(),
 			flexible: false,
 			type: 0,
 			state: 0,
 			id: 0,
 			timestamp: 0,
 		});
-		move_to(admin, HeapStorage {
+		move_to(admin, OrderStore {
 			orders: order_table,
 			id: 1,
 		});
@@ -79,8 +80,8 @@ module resource_account::order {
 	/**
 	*	Insert a new Order
 	*/
-	public fun heap_insert(heap: &mut OrderHeap, id: u64) acquires HeapStorage {
-		let order = fetch_ref(id);
+	public fun heap_insert(heap: &mut OrderHeap, id: u64) acquires OrderStore {
+		let order = fetch_order_ref(id);
 		let price_level = PriceLevel {
 			price: order.price,
 			fixedOrders: vector::empty<u64>(),
@@ -128,8 +129,8 @@ module resource_account::order {
 	/**
 	*	Try to pair `units` units for a given price
 	*/
-	public fun heap_match(heap: &mut OrderHeap, id: u64) : (u64, vector<u64>) acquires HeapStorage {
-		let order = fetch_ref(id);
+	public fun heap_match(heap: &mut OrderHeap, id: u64) : (u64, vector<u64>) acquires OrderStore {
+		let order = fetch_order_ref(id);
 
 		let matched = vector::empty<u64>();
 		let matchedUnits = 0u64;
@@ -148,7 +149,7 @@ module resource_account::order {
 			loop {
 				if (matchedUnits >= requiredUnits) break;
 
-				let storage = borrow_global<HeapStorage>(@resource_account);
+				let storage = borrow_global<OrderStore>(@resource_account);
 				let top_fixed_order = best_fixed_order(head, storage);
 				let top_flex_order = best_flex_order(head, storage);
 				let next_candidate = best_order(top_fixed_order, top_flex_order);
@@ -182,8 +183,8 @@ module resource_account::order {
 	/**
 	*	Return the order on top
 	*/
-	public fun heap_head(heap: &OrderHeap): u64 acquires HeapStorage {
-		let storage = borrow_global<HeapStorage>(@resource_account);
+	public fun heap_head(heap: &OrderHeap): u64 acquires OrderStore {
+		let storage = borrow_global<OrderStore>(@resource_account);
 
 		let top = vector::borrow(& heap.arr, 0);
 
@@ -195,8 +196,8 @@ module resource_account::order {
 		top_order.id
 	}
 
-	public fun heap_pop(heap: &mut OrderHeap): u64 acquires HeapStorage {
-		let storage = borrow_global<HeapStorage>(@resource_account);
+	public fun heap_pop(heap: &mut OrderHeap): u64 acquires OrderStore {
+		let storage = borrow_global<OrderStore>(@resource_account);
 
 		let top = vector::borrow_mut(&mut heap.arr, 0);
 	
@@ -217,7 +218,7 @@ module resource_account::order {
 			pop_from_timestamp_heap(&mut top.flexibleOrders);
 		};
 
-		let new_head = fetch_ref(heap_head(heap));
+		let new_head = fetch_order_ref(heap_head(heap));
 		if (! is_valid(new_head)) {
 			pop_pricelevel(heap);
 		};
@@ -225,7 +226,12 @@ module resource_account::order {
 		top_id
 	}
 
-	fun add_to_timestamp_heap(vec: &mut vector<u64>, order: u64) acquires HeapStorage {
+	public fun heap_is_empty(heap: & OrderHeap): bool acquires OrderStore {
+		let head = heap_head(heap);
+		head == 0
+	}
+
+	fun add_to_timestamp_heap(vec: &mut vector<u64>, order: u64) acquires OrderStore {
 		vector::push_back(vec, order);
 
 		let cur = vector::length(vec)-1;
@@ -244,7 +250,7 @@ module resource_account::order {
 		};
 	}
 
-	fun pop_from_timestamp_heap(vec: &mut vector<u64>) acquires HeapStorage {
+	fun pop_from_timestamp_heap(vec: &mut vector<u64>) acquires OrderStore {
 		vector::swap_remove(vec, 0);
 
 		let parent = 0u64;
@@ -313,7 +319,7 @@ module resource_account::order {
 		(idx - 1)/2
 	}
 
-	fun best_fixed_order(price_level: &PriceLevel, storage: &HeapStorage): &Order {
+	fun best_fixed_order(price_level: &PriceLevel, storage: &OrderStore): &Order {
 		let vec = &price_level.fixedOrders;
 		let key = if (vector::length(vec) == 0) 0u64 else *vector::borrow(vec, 0) ;
 		table::borrow(
@@ -322,7 +328,7 @@ module resource_account::order {
 		)
 	}
 
-	fun best_flex_order(price_level: &PriceLevel, storage: &HeapStorage): &Order {
+	fun best_flex_order(price_level: &PriceLevel, storage: &OrderStore): &Order {
 		let vec = &price_level.flexibleOrders;
 		let key = if (vector::length(vec) == 0) 0u64 else *vector::borrow(vec, 0) ;
 		table::borrow(
@@ -341,7 +347,7 @@ module resource_account::order {
 		(order_ref.timestamp != 0)
 	}
 
-	fun heapify(heap: &mut OrderHeap, root: u64) acquires HeapStorage {
+	fun heapify(heap: &mut OrderHeap, root: u64) acquires OrderStore {
 		let parent = root;
 		let len = vector::length(&heap.arr);
 		loop {
@@ -391,7 +397,7 @@ module resource_account::order {
 		}
 	}
 
-	fun merge_into_pricelevel(base: &mut PriceLevel, addition: &PriceLevel) acquires HeapStorage {
+	fun merge_into_pricelevel(base: &mut PriceLevel, addition: &PriceLevel) acquires OrderStore {
 		vector::for_each_ref(&addition.fixedOrders, |id| {
 			add_to_timestamp_heap(&mut base.fixedOrders, *id);
 		});
@@ -400,7 +406,7 @@ module resource_account::order {
 		});
 	}
 
-	fun pop_pricelevel(heap: &mut OrderHeap) acquires HeapStorage {
+	fun pop_pricelevel(heap: &mut OrderHeap) acquires OrderStore {
 		vector::swap_remove(&mut heap.arr, 0);
 		let root = 0u64;
 
@@ -420,8 +426,8 @@ module resource_account::order {
 		type: u8,
 		flexible: bool,
 		state: u8,
-	) : u64 acquires HeapStorage {
-		let storage = borrow_global_mut<HeapStorage>(@resource_account);
+	) : u64 acquires OrderStore {
+		let storage = borrow_global_mut<OrderStore>(@resource_account);
 		let id = storage.id;
 		storage.id = id + 1;
 		table::add(&mut storage.orders, id, Order {
@@ -431,6 +437,7 @@ module resource_account::order {
 
 			from,
 			id,
+			positions: vector::empty<u64>(),
 
 			type, 
 			flexible,
@@ -440,52 +447,57 @@ module resource_account::order {
 		id
 	}
 
-	public fun set_state(order: u64, state: u8) acquires HeapStorage {
-		fetch_ref_mut(order).state = state;
+	public fun set_state(order: u64, state: u8) acquires OrderStore {
+		fetch_order_ref_mut(order).state = state;
 	}
 
-	public fun set_units(order: u64, units: u64) acquires HeapStorage {
-		fetch_ref_mut(order).units = units;
+	public fun set_units(order: u64, units: u64) acquires OrderStore {
+		fetch_order_ref_mut(order).units = units;
 	}
 
-	public fun set_fixed(order: u64) acquires HeapStorage {
-		fetch_ref_mut(order).flexible = false;
+	public fun set_fixed(order: u64) acquires OrderStore {
+		fetch_order_ref_mut(order).flexible = false;
 	}
 
-	public fun from(order: u64): address acquires HeapStorage {
-		fetch_ref(order).from
+	public fun add_position(order: u64, position: u64) acquires OrderStore {
+		vector::push_back(&mut fetch_order_ref_mut(order).positions, position);
 	}
 
-	public fun price(order: u64) : (u64) acquires HeapStorage {
-		fetch_ref(order).price
+	public fun from(order: u64): address acquires OrderStore {
+		fetch_order_ref(order).from
 	}
 
-	public fun units(order: u64) : (u64) acquires HeapStorage {
-		fetch_ref(order).units
+	public fun price(order: u64) : (u64) acquires OrderStore {
+		fetch_order_ref(order).price
 	}
 
-	public fun state(order: u64) : (u8) acquires HeapStorage {
-		fetch_ref(order).state
+	public fun units(order: u64) : (u64) acquires OrderStore {
+		fetch_order_ref(order).units
 	}
 
-	public fun type(order: u64): (u8) acquires HeapStorage {
-		fetch_ref(order).type
+	public fun state(order: u64) : (u8) acquires OrderStore {
+		fetch_order_ref(order).state
 	}
 
-	public fun time(order: u64): (u64) acquires HeapStorage {
-		fetch_ref(order).timestamp
+	public fun type(order: u64): (u8) acquires OrderStore {
+		fetch_order_ref(order).type
 	}
 
-	public fun is_flexible(order: u64): bool acquires HeapStorage {
-		fetch_ref(order).flexible
+	public fun time(order: u64): (u64) acquires OrderStore {
+		fetch_order_ref(order).timestamp
 	}
 
-	inline fun fetch_ref(order: u64): &Order acquires HeapStorage {
-		table::borrow(&borrow_global<HeapStorage>(@resource_account).orders, order)
+	public fun is_flexible(order: u64): bool acquires OrderStore {
+		fetch_order_ref(order).flexible
 	}
 
-	inline fun fetch_ref_mut(order: u64): &mut Order acquires HeapStorage {
-		table::borrow_mut(&mut borrow_global_mut<HeapStorage>(@resource_account).orders, order)
+
+	inline fun fetch_order_ref(order: u64): &Order acquires OrderStore {
+		table::borrow(&borrow_global<OrderStore>(@resource_account).orders, order)
+	}
+
+	inline fun fetch_order_ref_mut(order: u64): &mut Order acquires OrderStore {
+		table::borrow_mut(&mut borrow_global_mut<OrderStore>(@resource_account).orders, order)
 	}
 
 	#[test_only]
@@ -498,7 +510,7 @@ module resource_account::order {
 	}
 
 	#[test(admin = @resource_account)]
-	fun test_heap_different_prices(admin: signer) acquires HeapStorage {
+	fun test_heap_different_prices(admin: signer) acquires OrderStore {
 		initialize_module(&admin);
 
 		let minHeap = MinHeap();
@@ -533,7 +545,7 @@ module resource_account::order {
 
 		// std::debug::print(&minHeap);
 		vector::zip(prices_ascending, units_ascending, |price, units| {
-			let head_order = fetch_ref(heap_head(&minHeap));
+			let head_order = fetch_order_ref(heap_head(&minHeap));
 			// std::debug::print(head_order);
 			assert!(head_order.price == price, passed);
 			passed = passed + 1;
@@ -543,7 +555,7 @@ module resource_account::order {
 		});
 
 		vector::zip(prices_descending, units_descending, |price, units| {
-			let head_order = fetch_ref(heap_head(&maxHeap));
+			let head_order = fetch_order_ref(heap_head(&maxHeap));
 			assert!(head_order.price == price, passed);
 			passed = passed + 1;
 			assert!(head_order.units == units, passed);
@@ -553,7 +565,7 @@ module resource_account::order {
 	}
 
 	#[test(admin = @resource_account)]
-	fun test_heap_same_prices(admin: signer) acquires HeapStorage {
+	fun test_heap_same_prices(admin: signer) acquires OrderStore {
 		initialize_module(&admin);
 
 		let minHeap = MinHeap();
@@ -586,7 +598,7 @@ module resource_account::order {
 
 		// std::debug::print(&minHeap);
 		vector::for_each(prices_ascending, |price| {
-			let head_order = fetch_ref(heap_head(&minHeap));
+			let head_order = fetch_order_ref(heap_head(&minHeap));
 			// std::debug::print(head_order);
 			assert!(head_order.price == price, passed);
 			passed = passed + 1;
@@ -594,7 +606,7 @@ module resource_account::order {
 		});
 
 		vector::for_each(prices_descending, |price| {
-			let head_order = fetch_ref(heap_head(&maxHeap));
+			let head_order = fetch_order_ref(heap_head(&maxHeap));
 			assert!(head_order.price == price, passed);
 			passed = passed + 1;
 			heap_pop(&mut maxHeap);
@@ -602,7 +614,7 @@ module resource_account::order {
 	}
 
 	#[test(admin = @resource_account)]
-	fun test_heap_different_types(admin: signer) acquires HeapStorage {
+	fun test_heap_different_types(admin: signer) acquires OrderStore {
 		initialize_module(&admin);
 
 		let minHeap = MinHeap();
@@ -635,14 +647,14 @@ module resource_account::order {
 		});
 
 		vector::for_each(prices_ascending, |price| {
-			let head_order = fetch_ref(heap_head(&minHeap));
+			let head_order = fetch_order_ref(heap_head(&minHeap));
 			assert!(head_order.price == price, passed);
 			passed = passed + 1;
 			heap_pop(&mut minHeap);
 		});
 
 		vector::for_each(prices_descending, |price| {
-			let head_order = fetch_ref(heap_head(&maxHeap));
+			let head_order = fetch_order_ref(heap_head(&maxHeap));
 			assert!(head_order.price == price, passed);
 			passed = passed + 1;
 			heap_pop(&mut maxHeap);
@@ -650,7 +662,7 @@ module resource_account::order {
 	}
 
 	#[test(user = @resource_account)]
-	fun test_heap_match(user: signer) acquires HeapStorage {
+	fun test_heap_match(user: signer) acquires OrderStore {
 		initialize_module(&user);
 
 		let minHeap = MinHeap();
