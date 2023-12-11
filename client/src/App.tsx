@@ -4,13 +4,19 @@ import { Provider, Network } from "aptos";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { useState, useEffect } from "react";
 
+import { Wrap, WrapItem, Text } from '@chakra-ui/react';
+import { Link } from 'react-router-dom';
+import Sidebar from './components/Sidebar';
+
 import "@aptos-labs/wallet-adapter-ant-design/dist/index.css";
 
 import Navbar from "./components/Navbar/Navbar";
+import { Route, Routes } from "react-router-dom";
 
 export const provider = new Provider(Network.DEVNET);
 export const moduleAddress = "0xf47fe7581a575205d4b6b08d95e84b96725fdb93dfb112691660c9a133eeb312";
 export const moduleName = "TradingPlatform";
+
 
 function App() {
 	const { account } = useWallet();
@@ -158,6 +164,17 @@ function App() {
 	};
 	return (
 		<>
+			<Routes>
+				<Route path="/" element={<Home />} />
+				<Route path="/a" element={<Cryptopage name={"A"} />} />
+				<Route path="/b" element={<Cryptopage name={"B"} />} />
+				<Route path="/c" element={<Cryptopage name={"C"} />} />
+				<Route path="/d" element={<Cryptopage name={"D"} />} />
+				<Route path="/e" element={<Cryptopage name={"E"} />} />
+				<Route path="/f" element={<Cryptopage name={"F"} />} />
+				<Route path="/g" element={<Cryptopage name={"G"} />} />
+				<Route path="/h" element={<Cryptopage name={"H"} />} />
+			</Routes>
 			<Navbar/>
 			<Spin spinning={transactionInProgress}>
 				{!userRegistered ? (

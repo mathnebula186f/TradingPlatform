@@ -1,8 +1,8 @@
 import React from 'react';
-import Graph from './candlegraph/Graph';
-import arr from './candlegraph/output.mjs';
+import Graph from '../candlegraph/Graph';
+import arr from '../candlegraph/output.mjs';
 import { Text } from '@chakra-ui/layout';
-import Table from './tables/Table'
+import Table from '../tables/Table'
 
 interface CryptopageProps {
   name: string; 
