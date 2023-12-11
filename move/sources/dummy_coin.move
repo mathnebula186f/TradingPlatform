@@ -1,21 +1,19 @@
 /**
 * Dummy coin only for testing purposes
 */
-module resource_account::dummy_coin {
+module resource_account::coins {
 	use aptos_framework::managed_coin;
 
-	struct DummyCoin {}
+	struct BTC {}
+	struct USDT {}
+	struct ETH {}
+	struct APT {}
 
 	entry fun init_module(admin: &signer) {
-		managed_coin::initialize<DummyCoin>(admin, b"DummyCoin", b"DCOIN", 8, true);
-	}
-
-	public entry fun mint(admin: &signer, destination: address, amount: u64) {
-		managed_coin::mint<DummyCoin>(admin, destination, amount);
-	}
-
-	public entry fun register(user: &signer) {
-		managed_coin::register<DummyCoin>(user);
+		managed_coin::initialize<BTC>(admin, b"DummyCoin", b"DCOIN", 8, true);
+		managed_coin::initialize<USDT>(admin, b"DummyCoin", b"DCOIN", 8, true);
+		managed_coin::initialize<ETH>(admin, b"DummyCoin", b"DCOIN", 8, true);
+		managed_coin::initialize<APT>(admin, b"DummyCoin", b"DCOIN", 8, true);
 	}
 
 	#[test_only]
