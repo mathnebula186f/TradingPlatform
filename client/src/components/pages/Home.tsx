@@ -2,7 +2,7 @@ import { Wrap, WrapItem, Button, Text } from '@chakra-ui/react';
 import { Link } from 'react-router-dom';
 import Sidebar from './Sidebar';
 
-const tokenNames = ["A", "B", "C", "D", "E", "F", "G", "H"];
+const tokenNames = ["APT-USDT", "BTC-USDT", "ETH-USDT"];
 const colors = ["red", "orange", "yellow", "green", "teal", "blue", "cyan", "purple", "pink", "linkedin", "facebook", "messenger", "whatsapp", "twitter", "telegram"];
 
 const Home = () => {

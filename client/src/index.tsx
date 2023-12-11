@@ -21,14 +21,9 @@ root.render(
 					<Route path="/" element={<App />} />
 					<Route path="/profile" element={<ProfilePage />} />
 					<Route path="/home" element={<Home />} />
-					<Route path="/a" element={<Cryptopage name={"A"} />} />
-					<Route path="/b" element={<Cryptopage name={"B"} />} />
-					<Route path="/c" element={<Cryptopage name={"C"} />} />
-					<Route path="/d" element={<Cryptopage name={"D"} />} />
-					<Route path="/e" element={<Cryptopage name={"E"} />} />
-					<Route path="/f" element={<Cryptopage name={"F"} />} />
-					<Route path="/g" element={<Cryptopage name={"G"} />} />
-					<Route path="/h" element={<Cryptopage name={"H"} />} />
+					<Route path="/apt-usdt" element={<Cryptopage name={"APT/USDT"} />} />
+					<Route path="/btc-usdt" element={<Cryptopage name={"BTC/USDT"} />} />
+					<Route path="/eth-usdt" element={<Cryptopage name={"ETH/USDT"} />} />
 				</Routes>
 		</BrowserRouter>
 		</ChakraProvider>
