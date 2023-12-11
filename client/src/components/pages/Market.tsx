@@ -12,7 +12,21 @@ const Market = () => {
   const [size, setSize] = useState('');
   const [error, setError] = useState('');
 
-  const handleSubmit = () => {
+  const handleSell = () => {
+    // Basic validation
+    if (!size) {
+      setError('The fields are required');
+      return;
+    }
+
+    // Reset error state
+    setError('');
+
+    // Perform actions with the submitted values
+    console.log('Size:', size);
+  };
+
+  const handleBuy = () => {
     // Basic validation
     if (!size) {
       setError('The fields are required');
@@ -45,8 +59,11 @@ const Market = () => {
         </Box>
       )}
 
-      <Button colorScheme="teal" onClick={handleSubmit}>
-        Buy/Sell
+      <Button colorScheme="teal" onClick={handleBuy}>
+        Buy
+      </Button>
+      <Button colorScheme="teal" onClick={handleSell}>
+        Sell
       </Button>
     </VStack>
   );

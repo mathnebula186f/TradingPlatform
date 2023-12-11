@@ -13,7 +13,22 @@ const Limit = () => {
   const [size, setSize] = useState('');
   const [error, setError] = useState('');
 
-  const handleSubmit = () => {
+  const handleBuy = () => {
+    // Basic validation
+    if (!price || !size) {
+      setError('Both fields are required');
+      return;
+    }
+
+    // Reset error state
+    setError('');
+
+    // Perform actions with the submitted values
+    console.log('Price:', price);
+    console.log('Size:', size);
+  };
+
+  const handleSell = () => {
     // Basic validation
     if (!price || !size) {
       setError('Both fields are required');
@@ -58,8 +73,11 @@ const Limit = () => {
         </Box>
       )}
 
-      <Button colorScheme="teal" onClick={handleSubmit}>
-        Buy/Sell
+      <Button colorScheme="teal" onClick={handleBuy}>
+        Buy
+      </Button>
+      <Button colorScheme="teal" onClick={handleSell}>
+        Sell
       </Button>
     </VStack>
   );
