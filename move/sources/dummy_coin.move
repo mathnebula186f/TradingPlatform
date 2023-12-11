@@ -1,3 +1,6 @@
+/**
+* Dummy coin only for testing purposes
+*/
 module resource_account::dummy_coin {
 	use aptos_framework::managed_coin;
 

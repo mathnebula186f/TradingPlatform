@@ -1,10 +1,17 @@
+/**
+* Module containing functions surrounding Positions held by users
+*/
 module resource_account::position {
 	use aptos_framework::table::{Self, Table};
+
 	#[test_only]
 	use aptos_framework::timestamp;
 
 	friend resource_account::trading_platform;
 
+	/**
+	* Encapsulate data surrounding an open postion
+	*/
 	struct Position has store {
 		position_id: u64,
 		order_id: u64,
@@ -12,11 +19,15 @@ module resource_account::position {
 		strike_units: u64,
 	}
 
+	/**
+	* Storage of all the positions ever held
+	*/
 	struct PositionStore has key {
 		positions: Table<u64, Position>,
 		id: u64,
 	}
 
+	/// Initialize global position storage and id generator
 	entry fun init_module(admin: &signer) {
 		let position_table = table::new<u64, Position>();
 		move_to(admin, PositionStore {
@@ -25,6 +36,11 @@ module resource_account::position {
 		});
 	}
 
+	/**
+	*	Getters and setters
+	*/
+
+	/// Open a new position and return its id
 	public(friend) fun open_position(
 		order_id: u64,
 		strike_price: u64,

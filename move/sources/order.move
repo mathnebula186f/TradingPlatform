@@ -1,6 +1,5 @@
 /**
-* Module with functions for 
-* Heap of Orders
+* Module containing functions surrounding Orders
 */
 module resource_account::order {
 	use std::vector;
@@ -13,6 +12,9 @@ module resource_account::order {
 	const MAX_HEAP: u8 = 0;
 	const MIN_HEAP: u8 = 1;
 
+	/**
+	* Encapsulate data surrounding an Order
+	*/
 	struct Order has store {
 		id: u64,
 		type: u8,
@@ -34,22 +36,36 @@ module resource_account::order {
 		state: u8,
 	}
 
+	/**
+	* Store a heap of references to orders, primarily sorted by prices and then further with timestamp
+	*/
 	struct OrderHeap has store, drop {
 		arr: vector<PriceLevel>,
 		type: u8
 	}
 
+	/**
+	* Pricelevel stores all the orders at a given pricelevel
+	*	- fixedOrders are orders that have to consumed atomically
+	*	- flexibleOrders are orders that can be consumed in parts
+	*/
 	struct PriceLevel has store, drop {
 		price: u64,
 		fixedOrders: vector<u64>,
 		flexibleOrders: vector<u64>,
 	}
 	
+	/**
+	* Storage of all the orders ever generated
+	*/
 	struct OrderStore has key {
 		orders: Table<u64, Order>,
 		id: u64,
 	}
 
+	/**
+	* Create a max heap
+	*/
 	public fun MaxHeap() : (OrderHeap) {
 		OrderHeap {
 			arr: vector::empty<PriceLevel>(),
@@ -57,6 +73,9 @@ module resource_account::order {
 		}
 	}
 
+	/**
+	* Create a min heap
+	*/
 	public fun MinHeap() : (OrderHeap) {
 		OrderHeap {
 			arr: vector::empty<PriceLevel>(),
@@ -64,6 +83,7 @@ module resource_account::order {
 		}
 	}
 
+	/// Initialize global order storage and id generator
 	entry fun init_module(admin: &signer) {
 		let order_table = table::new<u64, Order>();
 		table::add(&mut order_table, 0, Order {
@@ -93,7 +113,7 @@ module resource_account::order {
 	}
 
 	/**
-	*	Insert a new Order
+	* Insert a order to the heap
 	*/
 	public fun heap_insert(heap: &mut OrderHeap, id: u64) acquires OrderStore {
 		let order = fetch_order_ref(id);
@@ -142,7 +162,7 @@ module resource_account::order {
 	}
 
 	/**
-	*	Try to pair `units` units for a given price
+	* Try to pair `units` units with a price cap (lower cap if max heap and upper cap if min heap)
 	*/
 	public fun heap_match(heap: &mut OrderHeap, id: u64) : (u64, vector<u64>) acquires OrderStore {
 		let order = fetch_order_ref(id);
@@ -200,7 +220,7 @@ module resource_account::order {
 	}
 
 	/**
-	*	Return the order on top
+	* Return the order on top of the heap
 	*/
 	public fun heap_head(heap: &OrderHeap): u64 acquires OrderStore {
 		let storage = borrow_global<OrderStore>(@resource_account);
@@ -215,6 +235,9 @@ module resource_account::order {
 		top_order.id
 	}
 
+	/**
+	* Remove and return the order on top of the heap
+	*/
 	public fun heap_pop(heap: &mut OrderHeap): u64 acquires OrderStore {
 		let storage = borrow_global<OrderStore>(@resource_account);
 
@@ -446,6 +469,7 @@ module resource_account::order {
 	*	the constants::Order type
 	*/
 
+	/// Create a new order and return its id
 	public(friend) fun newOrder(
 		price: u64,
 		units: u64,
@@ -494,10 +518,6 @@ module resource_account::order {
 		fetch_order_ref_mut(order).flexible = false;
 	}
 
-	public(friend) fun set_positions(order: u64, pos: vector<u64>) acquires OrderStore {
-		fetch_order_ref_mut(order).positions = pos;
-	}
-
 	public(friend) fun add_position(order: u64, position: u64) acquires OrderStore {
 		vector::push_back(&mut fetch_order_ref_mut(order).positions, position);
 	}
@@ -507,13 +527,17 @@ module resource_account::order {
 		ref.margin_deposits = ref.margin_deposits + amount;
 	}
 
+	public fun of(order: u64): address acquires OrderStore {
+		fetch_order_ref(order).of
+	}
+
+	public fun time(order: u64): (u64) acquires OrderStore {
+		fetch_order_ref(order).timestamp
+	}
+
 	#[view]
 	public fun list_positions(order: u64): vector<u64> acquires OrderStore {
 		fetch_order_ref(order).positions
-	}
-
-	public fun of(order: u64): address acquires OrderStore {
-		fetch_order_ref(order).of
 	}
 
 	#[view]
@@ -534,10 +558,6 @@ module resource_account::order {
 	#[view]
 	public fun type(order: u64): (u8) acquires OrderStore {
 		fetch_order_ref(order).type
-	}
-
-	public fun time(order: u64): (u64) acquires OrderStore {
-		fetch_order_ref(order).timestamp
 	}
 	
 	#[view]

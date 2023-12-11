@@ -50,9 +50,8 @@ module resource_account::trading_platform {
 		expiration_prices: Table<u64, u64>,
 	}
 
-	struct UserResource has key {	
+	struct UserResource<phantom base, phantom asset> has key {	
 		orders: vector<u64>,
-		// positions: vector<u64>,
 	}
 
 	/**
@@ -68,31 +67,27 @@ module resource_account::trading_platform {
 	}
 
 	/**
-	*	Register a new user by
-	*	creating a resource under
-	*	his address
+	* Register a new user by creating a resource under his address
 	*/
-	public entry fun register(sender: &signer) {
-		let user_resource = UserResource {
+	public entry fun register<base, asset>(sender: &signer) {
+		let user_resource = UserResource<base, asset> {
 			orders: vector<u64>[],
-			// positions: vector<u64>[],
 		};
 
 		move_to(sender, user_resource);
 	}
 
 	/**
-	*	Add a new sell request
-	*	for the seller
+	* Add a new limit sell request for the seller
 	*/
 	public entry fun limit_short<base, asset>(seller: &signer, price: u64, units: u64, flexible: bool) 
 		acquires ContractStorage, UserResource, Market {
-		check_registration(seller);
+		check_registration<base, asset>(seller);
 		create_market_if_not_exists<base, asset>();
 		let expiration_time = check_and_update_expiration<base, asset>();
 
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
-		let userStore = borrow_global_mut<UserResource>(signer::address_of(seller));
+		let userStore = borrow_global_mut<UserResource<base, asset>>(signer::address_of(seller));
 	
 		//	Get a new order
 		let id = order::newOrder(
@@ -189,12 +184,12 @@ module resource_account::trading_platform {
 	*/
 	public entry fun limit_long<base, asset>(buyer: &signer, price: u64, units: u64, flexible: bool)
 		acquires ContractStorage, UserResource, Market {
-		check_registration(buyer);
+		check_registration<base, asset>(buyer);
 		create_market_if_not_exists<base, asset>();
 		let expiration_time = check_and_update_expiration<base, asset>();
 	
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
-		let userStore = borrow_global_mut<UserResource>(signer::address_of(buyer));
+		let userStore = borrow_global_mut<UserResource<base, asset>>(signer::address_of(buyer));
 	
 		//	Get a new order
 		let id = order::newOrder(
@@ -289,7 +284,7 @@ module resource_account::trading_platform {
 
 	public entry fun market_long<base, asset>(buyer: &signer, amount: u64)
 		acquires ContractStorage, UserResource, Market {
-		check_registration(buyer);
+		check_registration<base, asset>(buyer);
 		create_market_if_not_exists<base, asset>();
 		let expiration_time = check_and_update_expiration<base, asset>();
 	
@@ -301,7 +296,7 @@ module resource_account::trading_platform {
 
 		let top = order::heap_head(&mut market.sellOrders);
 		let best_price = order::price(top);
-		let dummy_order = create_new_order_for(
+		let dummy_order = create_new_order_for<base, asset>(
 			signer::address_of(buyer),
 			MAX_PRICE,
 			maximum_buy_units(amount, best_price),
@@ -367,13 +362,13 @@ module resource_account::trading_platform {
 
 	public entry fun market_long_units<base, asset>(buyer: &signer, num_units: u64)
 		acquires ContractStorage, UserResource, Market {
-		check_registration(buyer);
+		check_registration<base, asset>(buyer);
 		create_market_if_not_exists<base, asset>();
 		let expiration_time = check_and_update_expiration<base, asset>();
 	
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
 
-		let dummy_order = create_new_order_for(
+		let dummy_order = create_new_order_for<base, asset>(
 			signer::address_of(buyer),
 			MAX_PRICE,
 			num_units,
@@ -441,7 +436,7 @@ module resource_account::trading_platform {
 
 	public entry fun market_short<base, asset>(seller: &signer, amount: u64)
 		acquires ContractStorage, UserResource, Market {
-		check_registration(seller);
+		check_registration<base, asset>(seller);
 		create_market_if_not_exists<base, asset>();
 		let expiration_time = check_and_update_expiration<base, asset>();
 	
@@ -453,7 +448,7 @@ module resource_account::trading_platform {
 
 		let top = order::heap_head(&mut market.buyOrders);
 		let best_price = order::price(top);
-		let dummy_order = create_new_order_for(
+		let dummy_order = create_new_order_for<base, asset>(
 			signer::address_of(seller),
 			0,
 			maximum_sell_units(amount, best_price),
@@ -519,13 +514,13 @@ module resource_account::trading_platform {
 
 	public entry fun market_short_units<base, asset>(seller: &signer, num_units: u64)
 		acquires ContractStorage, UserResource, Market {
-		check_registration(seller);
+		check_registration<base, asset>(seller);
 		create_market_if_not_exists<base, asset>();
 		let expiration_time = check_and_update_expiration<base, asset>();
 	
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
 
-		let dummy_order = create_new_order_for(
+		let dummy_order = create_new_order_for<base, asset>(
 			signer::address_of(seller),
 			0,
 			num_units,
@@ -597,7 +592,7 @@ module resource_account::trading_platform {
 	*	request by the user
 	*/
 	public entry fun cancel_request<base, asset>(user: &signer, order_id: u64) acquires ContractStorage {
-		check_registration(user);
+		check_registration<base, asset>(user);
 		create_market_if_not_exists<base, asset>();
 		check_and_update_expiration<base, asset>();
 
@@ -621,11 +616,11 @@ module resource_account::trading_platform {
 	public entry fun close_order<base, asset>(user: &signer, order_id: u64)
 		acquires ContractStorage, UserResource, Market {
 
-		check_registration(user);
+		check_registration<base, asset>(user);
 		create_market_if_not_exists<base, asset>();
 		check_and_update_expiration<base, asset>();
 
-		vector::remove_value(&mut borrow_global_mut<UserResource>(signer::address_of(user)).orders, &order_id);
+		vector::remove_value(&mut borrow_global_mut<UserResource<base, asset>>(signer::address_of(user)).orders, &order_id);
 		order::set_state(order_id, constants::Cancelled());
 
 		let storage = borrow_global_mut<ContractStorage>(@resource_account);
@@ -740,12 +735,8 @@ module resource_account::trading_platform {
 		borrow_global<Market<base, asset>>(@resource_account).price
 	}
 
-	inline fun destroy_user_resource(user: address) {
-		let UserResource { orders: _x } = move_from<UserResource>(user);
-	}
-
-	inline fun check_registration(user: &signer) {
-		assert!(exists<UserResource>(signer::address_of(user)), error::permission_denied(0));
+	inline fun check_registration<base, asset>(user: &signer) {
+		assert!(exists<UserResource<base, asset>>(signer::address_of(user)), error::permission_denied(0));
 	}
 
 	fun create_market_if_not_exists<base, asset>() acquires ContractStorage {
@@ -777,11 +768,11 @@ module resource_account::trading_platform {
 		aptos_framework::coin::balance<AptosCoin>(addr)
 	}
 
-	inline fun add_to_orders(user: address, order: u64) acquires UserResource {
-		vector::push_back(&mut borrow_global_mut<UserResource>(user).orders, order);
+	inline fun add_to_orders<base, asset>(user: address, order: u64) acquires UserResource {
+		vector::push_back(&mut borrow_global_mut<UserResource<base, asset>>(user).orders, order);
 	}
 
-	inline fun create_new_order_for(
+	inline fun create_new_order_for<base, asset>(
 		user: address,
 		price: u64,
 		units: u64,
@@ -801,7 +792,7 @@ module resource_account::trading_platform {
 			position,
 			expiration_time,
 		);
-		add_to_orders(user, order);
+		add_to_orders<base, asset>(user, order);
 		order
 	}
 
@@ -882,11 +873,11 @@ module resource_account::trading_platform {
 	public fun make_limit_short(user: &signer, price: u64, units: u64, flexible: bool) acquires ContractStorage, UserResource, Market {
 
 		let user_addr = signer::address_of(user);
-		let before_len = vector::length(&borrow_global<UserResource>(user_addr).orders);
+		let before_len = vector::length(&borrow_global<UserResource<AptosCoin, DummyCoin>>(user_addr).orders);
 
 		limit_short<AptosCoin, DummyCoin>(user, price, units, flexible);
 		
-		let after_len = vector::length(&borrow_global<UserResource>(user_addr).orders);
+		let after_len = vector::length(&borrow_global<UserResource<AptosCoin, DummyCoin>>(user_addr).orders);
 		assert!(before_len + 1 == after_len, 0u64);
 	}
 
@@ -894,13 +885,13 @@ module resource_account::trading_platform {
 	public fun make_market_short(user: &signer, amount: u64) acquires ContractStorage, UserResource, Market {
 
 		let user_addr = signer::address_of(user);
-		let before_len = vector::length(&borrow_global<UserResource>(user_addr).orders);
+		let before_len = vector::length(&borrow_global<UserResource<AptosCoin, DummyCoin>>(user_addr).orders);
 
 		let before_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
 
 		market_short<AptosCoin, DummyCoin>(user, amount);
 		
-		let after_len = vector::length(&borrow_global<UserResource>(user_addr).orders);
+		let after_len = vector::length(&borrow_global<UserResource<AptosCoin, DummyCoin>>(user_addr).orders);
 		assert!(before_len + 1 == after_len, 0u64);
 
 		let after_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
@@ -934,12 +925,12 @@ module resource_account::trading_platform {
 
 		let user_addr = signer::address_of(user);
 
-		let before_len = vector::length(&borrow_global<UserResource>(user_addr).orders);
+		let before_len = vector::length(&borrow_global<UserResource<AptosCoin, DummyCoin>>(user_addr).orders);
 		let before_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
 
 		limit_long<AptosCoin, DummyCoin>(user, price, units, flexible);
 		
-		let after_len = vector::length(&borrow_global<UserResource>(signer::address_of(user)).orders);
+		let after_len = vector::length(&borrow_global<UserResource<AptosCoin, DummyCoin>>(signer::address_of(user)).orders);
 		assert!(before_len + 1 == after_len, 0u64);
 
 		let after_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
@@ -950,13 +941,13 @@ module resource_account::trading_platform {
 	public fun make_market_long(user: &signer, amount: u64) acquires ContractStorage, UserResource, Market {
 
 		let user_addr = signer::address_of(user);
-		let before_len = vector::length(&borrow_global<UserResource>(user_addr).orders);
+		let before_len = vector::length(&borrow_global<UserResource<AptosCoin, DummyCoin>>(user_addr).orders);
 
 		let before_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
 
 		market_long<AptosCoin, DummyCoin>(user, amount);
 		
-		let after_len = vector::length(&borrow_global<UserResource>(user_addr).orders);
+		let after_len = vector::length(&borrow_global<UserResource<AptosCoin, DummyCoin>>(user_addr).orders);
 		assert!(before_len + 1 == after_len, 0u64);
 
 		let after_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
@@ -982,13 +973,13 @@ module resource_account::trading_platform {
 		let sig = aptos_framework::account::create_account_for_test(addr);
 		aptos_framework::coin::register<DummyCoin>(&sig);
 		aptos_framework::coin::register<AptosCoin>(&sig);
-		register(&sig);
+		register<AptosCoin, DummyCoin>(&sig);
 		sig
 	}
 
 	#[test_only]
 	fun fetch_order_details(user: &signer, idx: u64) : (u64, u64, u64, u8) acquires UserResource {
-		let ur = borrow_global<UserResource>(signer::address_of(user));
+		let ur = borrow_global<UserResource<AptosCoin, DummyCoin>>(signer::address_of(user));
 		let id = *vector::borrow(&ur.orders, idx);
 		(id, order::price(id), order::units(id), order::state(id))
 	}
@@ -1008,13 +999,13 @@ module resource_account::trading_platform {
 
 	#[test(user = @resource_account)]
 	fun test_registration_working(user: signer) {
-		register(&user);
-		assert!(exists<UserResource>(signer::address_of(&user)), 0u64);
+		register<AptosCoin, DummyCoin>(&user);
+		assert!(exists<UserResource<AptosCoin, DummyCoin>>(signer::address_of(&user)), 0u64);
 	}
 
 	#[test(user = @resource_account), expected_failure]
 	fun test_unregistered_user_cant_use(user: signer) {
-		check_registration(&user);
+		check_registration<AptosCoin, DummyCoin>(&user);
 	}
 
 	#[test(admin = @resource_account)]
