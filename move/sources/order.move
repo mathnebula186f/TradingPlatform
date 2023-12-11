@@ -6,6 +6,8 @@ module resource_account::order {
 	use std::vector;
 	use resource_account::constants;
 	use aptos_framework::table::{Self, Table};
+
+	#[test_only]
 	use aptos_framework::timestamp;
 
 	friend resource_account::trading_platform;
@@ -14,15 +16,19 @@ module resource_account::order {
 	const MIN_HEAP: u8 = 1;
 
 	struct Order has store {
-		price: u64,
-		units: u64,
-		timestamp: u64,
-
-		from: address,
 		id: u64,
+		type: u8,
+		position: u8,
+
+		price: u64,
+		target_units: u64,
+		remaining_units: u64,
+
 		positions: vector<u64>,
 
-		type: u8,
+		of: address,
+		timestamp: u64,
+
 		flexible: bool,
 
 		state: u8,
@@ -61,15 +67,22 @@ module resource_account::order {
 	entry fun init_module(admin: &signer) {
 		let order_table = table::new<u64, Order>();
 		table::add(&mut order_table, 0, Order {
-			price: 0,
-			units: 0,
-			from: @0x0,
-			positions: vector::empty<u64>(),
-			flexible: false,
-			type: 0,
-			state: 0,
 			id: 0,
+			type: 0,
+			position: 0,
+
+			price: 0,
+			target_units: 0,
+			remaining_units: 0,
+
+			positions: vector::empty<u64>(),
+
+			of: @0x0,
 			timestamp: 0,
+			
+			flexible: false,
+			
+			state: 0,
 		});
 		move_to(admin, OrderStore {
 			orders: order_table,
@@ -134,21 +147,17 @@ module resource_account::order {
 
 		let matched = vector::empty<u64>();
 		let matchedUnits = 0u64;
-		let requiredUnits = order.units;
+		let requiredUnits = order.remaining_units;
 		let targetPrice = order.price;
 
-		loop {
-
-			if (vector::length(&heap.arr) == 0)	break;
-
+		let residue = vector<u64>[];
+		while (matchedUnits < requiredUnits && !heap_is_empty(heap)) {
 			let head = head_pricelevel_mut(heap);
 
 			if (heap.type == MIN_HEAP && head.price > targetPrice)	break;
 			if (heap.type == MAX_HEAP && head.price < targetPrice)	break;
-			
-			loop {
-				if (matchedUnits >= requiredUnits) break;
 
+			while (matchedUnits < requiredUnits) {
 				let storage = borrow_global<OrderStore>(@resource_account);
 				let top_fixed_order = best_fixed_order(head, storage);
 				let top_flex_order = best_flex_order(head, storage);
@@ -159,23 +168,33 @@ module resource_account::order {
 					break
 				};
 
+				// std::debug::print(next_candidate);
+
 				let fixed = (top_fixed_order == next_candidate);
 
-				if (next_candidate.state == constants::Cancelled()){
-					let vec = if (fixed) &mut head.fixedOrders else &mut head.flexibleOrders ;
-					pop_from_timestamp_heap(vec);
-					continue
+				if (next_candidate.state != constants::Cancelled()) {
+					if ((matchedUnits + next_candidate.remaining_units > requiredUnits) && fixed) {
+						vector::push_back(&mut residue, next_candidate.id);
+					} else {
+						matchedUnits = matchedUnits + next_candidate.remaining_units;
+						vector::push_back(&mut matched, next_candidate.id);
+					};
 				};
 
-				matchedUnits = matchedUnits + next_candidate.units;
-				vector::push_back(&mut matched, next_candidate.id);
-
-				let vec = if (fixed) &mut head.fixedOrders else &mut head.flexibleOrders ;
+				let vec = if (fixed) 
+					&mut head.fixedOrders 
+				else
+					&mut head.flexibleOrders
+				;
 				pop_from_timestamp_heap(vec);
 			};
 
 			if (matchedUnits >= requiredUnits) break;
 		};
+
+		vector::for_each(residue, |order| {
+			heap_insert(heap, order);
+		});
 
 		(matchedUnits, matched)
 	}
@@ -226,9 +245,8 @@ module resource_account::order {
 		top_id
 	}
 
-	public fun heap_is_empty(heap: & OrderHeap): bool acquires OrderStore {
-		let head = heap_head(heap);
-		head == 0
+	public fun heap_is_empty(heap: & OrderHeap): bool {
+		vector::length(& heap.arr) == 0
 	}
 
 	fun add_to_timestamp_heap(vec: &mut vector<u64>, order: u64) acquires OrderStore {
@@ -339,8 +357,16 @@ module resource_account::order {
 
 	inline fun best_order(top_fixed_order: &Order, top_flex_order: &Order): &Order {
 		if (is_valid(top_fixed_order) && is_valid(top_flex_order)) {
-			if (top_fixed_order.timestamp < top_flex_order.timestamp) top_fixed_order else top_flex_order
-		} else if (is_valid(top_fixed_order)) top_fixed_order else top_flex_order
+			if (top_fixed_order.timestamp > top_flex_order.timestamp)
+				top_flex_order
+			else
+				top_fixed_order
+		} else {
+			if (is_valid(top_fixed_order))
+				top_fixed_order
+			else
+				top_flex_order
+		}
 	}
 
 	inline fun is_valid(order_ref: &Order): bool {
@@ -406,11 +432,12 @@ module resource_account::order {
 		});
 	}
 
-	fun pop_pricelevel(heap: &mut OrderHeap) acquires OrderStore {
-		vector::swap_remove(&mut heap.arr, 0);
+	fun pop_pricelevel(heap: &mut OrderHeap): PriceLevel acquires OrderStore {
+		let pricelevel = vector::swap_remove(&mut heap.arr, 0);
 		let root = 0u64;
 
 		heapify(heap, root);
+		pricelevel
 	}
 
 
@@ -422,24 +449,29 @@ module resource_account::order {
 	public(friend) fun newOrder(
 		price: u64,
 		units: u64,
-		from: address,
+		of: address,
 		type: u8,
 		flexible: bool,
 		state: u8,
+		position: u8,
 	) : u64 acquires OrderStore {
 		let storage = borrow_global_mut<OrderStore>(@resource_account);
 		let id = storage.id;
 		storage.id = id + 1;
 		table::add(&mut storage.orders, id, Order {
-			price,
-			units,
-			timestamp: aptos_framework::timestamp::now_microseconds(),
-
-			from,
 			id,
+			type,
+			position,
+
+			price,
+			target_units: units,
+			remaining_units: units,
+
 			positions: vector::empty<u64>(),
 
-			type, 
+			of,
+			timestamp: aptos_framework::timestamp::now_microseconds(),
+
 			flexible,
 
 			state,
@@ -452,7 +484,7 @@ module resource_account::order {
 	}
 
 	public fun set_units(order: u64, units: u64) acquires OrderStore {
-		fetch_order_ref_mut(order).units = units;
+		fetch_order_ref_mut(order).remaining_units = units;
 	}
 
 	public fun set_fixed(order: u64) acquires OrderStore {
@@ -463,8 +495,8 @@ module resource_account::order {
 		vector::push_back(&mut fetch_order_ref_mut(order).positions, position);
 	}
 
-	public fun from(order: u64): address acquires OrderStore {
-		fetch_order_ref(order).from
+	public fun of(order: u64): address acquires OrderStore {
+		fetch_order_ref(order).of
 	}
 
 	public fun price(order: u64) : (u64) acquires OrderStore {
@@ -472,7 +504,7 @@ module resource_account::order {
 	}
 
 	public fun units(order: u64) : (u64) acquires OrderStore {
-		fetch_order_ref(order).units
+		fetch_order_ref(order).remaining_units
 	}
 
 	public fun state(order: u64) : (u8) acquires OrderStore {
@@ -481,6 +513,10 @@ module resource_account::order {
 
 	public fun type(order: u64): (u8) acquires OrderStore {
 		fetch_order_ref(order).type
+	}
+
+	public fun pos(order: u64): (u8) acquires OrderStore {
+		fetch_order_ref(order).position
 	}
 
 	public fun time(order: u64): (u64) acquires OrderStore {
@@ -502,10 +538,12 @@ module resource_account::order {
 
 	#[test_only]
 	public fun initialize_module(admin: &signer) {
-		let framework = aptos_framework::account::create_account_for_test(@aptos_framework);
-		let vm = aptos_framework::account::create_account_for_test(@vm_reserved);
-		timestamp::set_time_has_started_for_testing(&framework);
-		timestamp::update_global_time(&vm, @publisher_addr, 1);
+		if (!aptos_framework::account::exists_at(@aptos_framework)) {
+			let framework = aptos_framework::account::create_account_for_test(@aptos_framework);
+			let vm = aptos_framework::account::create_account_for_test(@vm_reserved);
+			timestamp::set_time_has_started_for_testing(&framework);
+			timestamp::update_global_time(&vm, @publisher_addr, 1);
+		};
 		init_module(admin);
 	}
 
@@ -532,9 +570,10 @@ module resource_account::order {
 				vector::pop_back(&mut prices),
 				vector::pop_back(&mut units),
 				vector::pop_back(&mut users),
-				constants::Sell(),
+				constants::Limit(),
 				false,
 				constants::Active(),
+				constants::Short(),
 			));
 		};
 
@@ -549,7 +588,7 @@ module resource_account::order {
 			// std::debug::print(head_order);
 			assert!(head_order.price == price, passed);
 			passed = passed + 1;
-			assert!(head_order.units == units, passed);
+			assert!(head_order.remaining_units == units, passed);
 			passed = passed + 1;
 			heap_pop(&mut minHeap);
 		});
@@ -558,7 +597,7 @@ module resource_account::order {
 			let head_order = fetch_order_ref(heap_head(&maxHeap));
 			assert!(head_order.price == price, passed);
 			passed = passed + 1;
-			assert!(head_order.units == units, passed);
+			assert!(head_order.remaining_units == units, passed);
 			passed = passed + 1;
 			heap_pop(&mut maxHeap);
 		});
@@ -585,9 +624,10 @@ module resource_account::order {
 				vector::pop_back(&mut prices),
 				vector::pop_back(&mut units),
 				vector::pop_back(&mut users),
-				constants::Sell(),
+				constants::Limit(),
 				false,
 				constants::Active(),
+				constants::Short(),
 			));
 		};
 
@@ -635,9 +675,10 @@ module resource_account::order {
 				vector::pop_back(&mut prices),
 				vector::pop_back(&mut units),
 				vector::pop_back(&mut users),
-				constants::Sell(),
+				constants::Limit(),
 				vector::pop_back(&mut flexibility),
 				constants::Active(),
+				constants::Short(),
 			));
 		};
 
@@ -676,9 +717,10 @@ module resource_account::order {
 				vector::pop_back(&mut prices),
 				vector::pop_back(&mut units),
 				vector::pop_back(&mut users),
-				constants::Sell(),
+				constants::Limit(),
 				false,
 				constants::Active(),
+				constants::Short(),
 			));
 		};
 
@@ -692,9 +734,10 @@ module resource_account::order {
 			buy_price,
 			buy_units,
 			@0xC0FFEE,
-			constants::Buy(),
+			constants::Limit(),
 			true,
 			constants::Active(),
+			constants::Long(),
 		);
 
 		let (matched_units, _) = heap_match(&mut minHeap, buy_order);

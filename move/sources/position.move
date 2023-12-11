@@ -11,7 +11,7 @@ module resource_account::position {
 		type: u8,
 		strike_price: u64,
 		strike_units: u64,
-		topup_amount: u64,
+		margin_deposits: u64,
 		expiration_time: u64,
 	}
 
@@ -33,6 +33,7 @@ module resource_account::position {
 		type: u8,
 		strike_price: u64,
 		strike_units: u64,
+		margin_deposits: u64,
 		expiration_time: u64,
 	) : u64 acquires PositionStore {
 		let storage = borrow_global_mut<PositionStore>(@resource_account);
@@ -45,9 +46,15 @@ module resource_account::position {
 			order_id,
 			type,
 			expiration_time,
-			topup_amount: 0,
+			margin_deposits,
 		});
+		// std::debug::print(fetch_position_ref(id));
 		id
+	}
+
+	public(friend) fun deposit_margin(position: u64, amount: u64) acquires PositionStore {
+		let ref = fetch_position_ref_mut(position);
+		ref.margin_deposits = ref.margin_deposits + amount;
 	}
 
 	public fun is_expired(position: u64): bool acquires PositionStore {
@@ -69,6 +76,10 @@ module resource_account::position {
 	public fun order(position: u64): u64 acquires PositionStore {
 		fetch_position_ref(position).order_id
 	}
+
+	public fun margin_deposits(position: u64): u64 acquires PositionStore {
+		fetch_position_ref(position).margin_deposits
+	}
 	
 	inline fun fetch_position_ref(position: u64): &Position acquires PositionStore {
 		table::borrow(&borrow_global<PositionStore>(@resource_account).positions, position)
@@ -76,5 +87,16 @@ module resource_account::position {
 
 	inline fun fetch_position_ref_mut(position: u64): &mut Position acquires PositionStore {
 		table::borrow_mut(&mut borrow_global_mut<PositionStore>(@resource_account).positions, position)
+	}
+
+	#[test_only]
+	public fun initialize_module(admin: &signer) {
+		if (!aptos_framework::account::exists_at(@aptos_framework)) {
+			let framework = aptos_framework::account::create_account_for_test(@aptos_framework);
+			let vm = aptos_framework::account::create_account_for_test(@vm_reserved);
+			timestamp::set_time_has_started_for_testing(&framework);
+			timestamp::update_global_time(&vm, @publisher_addr, 1);
+		};
+		init_module(admin);
 	}
 }
