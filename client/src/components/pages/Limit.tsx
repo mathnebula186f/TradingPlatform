@@ -7,11 +7,13 @@ import {
   Button,
   VStack,
 } from '@chakra-ui/react';
+import { Checkbox } from 'antd';
 
 const Limit = () => {
   const [price, setPrice] = useState('');
   const [size, setSize] = useState('');
   const [error, setError] = useState('');
+  const [atomic, setAtomic] = useState(false); // Default value for the checkbox
 
   const handleBuy = async () => {
     // Basic validation
@@ -30,6 +32,7 @@ const Limit = () => {
       const response = await axios.post('/post', {
         price,
         size,
+        atomic
       });
 
       // Handle the response (if needed)
@@ -57,6 +60,7 @@ const Limit = () => {
       const response = await axios.post('/post', {
         price,
         size,
+        atomic,
       });
 
       // Handle the response (if needed)
@@ -89,6 +93,16 @@ const Limit = () => {
           value={size}
           onChange={(e) => setSize(e.target.value)}
         />
+      </FormControl>
+
+      <FormControl>
+        <Checkbox
+          id="atomic"
+          isChecked={atomic}
+          onChange={(e) => setAtomic(e.target.checked)}
+        >
+          Atomic
+        </Checkbox>
       </FormControl>
 
       {error && (
