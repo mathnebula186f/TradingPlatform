@@ -7,10 +7,12 @@ import { useState, useEffect } from "react";
 import "@aptos-labs/wallet-adapter-ant-design/dist/index.css";
 
 import Navbar from "./components/Navbar/Navbar";
+import { Route, Routes } from "react-router-dom";
 
 export const provider = new Provider(Network.DEVNET);
 export const moduleAddress = "0xf47fe7581a575205d4b6b08d95e84b96725fdb93dfb112691660c9a133eeb312";
 export const moduleName = "TradingPlatform";
+
 
 function App() {
 	const { account } = useWallet();
