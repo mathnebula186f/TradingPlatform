@@ -5,7 +5,7 @@ import { Column, ColumnFilterElementTemplateOptions } from 'primereact/column';
 import { Dropdown, DropdownChangeEvent } from 'primereact/dropdown';
 import { InputNumber, InputNumberChangeEvent } from 'primereact/inputnumber';
 import { Tag } from 'primereact/tag';
-import txns from './data.mjs';
+// import txns from './data.mjs';
 import 'primereact/resources/themes/lara-light-indigo/theme.css';
 import 'primeflex/primeflex.css';                                   
 import 'primeicons/primeicons.css';
