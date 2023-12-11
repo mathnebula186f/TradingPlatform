@@ -10,7 +10,6 @@ module resource_account::trading_platform {
 	use aptos_std::math64::min;
 
 	use resource_account::constants;
-	use resource_account::dummy_coin::DummyCoin;
 	use resource_account::order::{Self, OrderHeap};	
 	use resource_account::position;
 	
@@ -19,10 +18,11 @@ module resource_account::trading_platform {
 	use std::vector;
 
 	#[test_only]
-	use resource_account::dummy_coin;
+	use resource_account::dummy_coin::{Self, DummyCoin};
 
 	const ENOT_ENOUGH_FUNDS: u64 = 0;
 	const ENOT_ENOUGH_LIQUIDITY: u64 = 1;
+	const EMARKET_NOT_FOUND: u64 = 2;
 
 	const ONE_DAY_MS: u64 = 8640000000000;
 	const MAX_PRICE: u64 = 0xffffffffffffffff;
@@ -32,11 +32,17 @@ module resource_account::trading_platform {
 	const SELLER_RATIO_NUM: u64 = 2;
 	const SELLER_RATIO_DEN: u64 = 1;
 
+	/**
+	* Stores the contract's global information like signer_capabilities and expiration time
+	*/
 	struct ContractStorage has key {
 		signer_cap: account::SignerCapability,
 		global_expiration_time: u64,
 	}
 
+	/**
+	* Stores data for a futures market of asset with base for margin and settlement
+	*/
 	struct Market<phantom base, phantom asset> has key {
 		sellOrders : OrderHeap,					//	Only active sell orders
 		buyOrders : OrderHeap,					//	Only active buy orders
@@ -46,19 +52,18 @@ module resource_account::trading_platform {
 
 	struct UserResource has key {	
 		orders: vector<u64>,
-		positions: vector<u64>,
+		// positions: vector<u64>,
 	}
 
+	/**
+	* Initialize by retrieving and storing the signer_capability
+	*/
 	entry fun init_module(admin: &signer) {
 		let signer_cap = aptos_framework::resource_account::retrieve_resource_account_cap(admin, @publisher_addr);
-		let sig = &account::create_signer_with_capability(&signer_cap);
 
 		move_to(admin, ContractStorage {
 			signer_cap: signer_cap,
-			// sellOrders: order::MinHeap(),
-			// buyOrders: order::MaxHeap(),
 			global_expiration_time: timestamp::now_microseconds() + ONE_DAY_MS,
-			// lastPrice: 0u64,
 		});
 	}
 
@@ -70,7 +75,7 @@ module resource_account::trading_platform {
 	public entry fun register(sender: &signer) {
 		let user_resource = UserResource {
 			orders: vector<u64>[],
-			positions: vector<u64>[],
+			// positions: vector<u64>[],
 		};
 
 		move_to(sender, user_resource);
@@ -84,7 +89,7 @@ module resource_account::trading_platform {
 		acquires ContractStorage, UserResource, Market {
 		check_registration(seller);
 		create_market_if_not_exists<base, asset>();
-		check_and_update_expiration<base, asset>();
+		let expiration_time = check_and_update_expiration<base, asset>();
 
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
 		let userStore = borrow_global_mut<UserResource>(signer::address_of(seller));
@@ -98,6 +103,7 @@ module resource_account::trading_platform {
 			flexible,
 			constants::Active(),
 			constants::Short(),
+			expiration_time,
 		);
 
 		//	Add the order's ID to the user's list
@@ -121,6 +127,7 @@ module resource_account::trading_platform {
 				vector::push_back(&mut tbe_price, order::price(matched_order));
 				vector::push_back(&mut tbe_units, strike_units);
 
+				margin_amount = margin_amount + calculate_seller_margin(order::price(matched_order), strike_units);
 				units = units - strike_units;
 				if (strike_units == order::units(matched_order))
 					order::set_state(matched_order, constants::Filled())
@@ -136,6 +143,7 @@ module resource_account::trading_platform {
 				vector::push_back(&mut tbe_price, order::price(matched_order));
 				vector::push_back(&mut tbe_units, strike_units);
 
+				margin_amount = margin_amount + calculate_seller_margin(order::price(matched_order), strike_units);
 				units = units - strike_units;
 				if (strike_units == order::units(matched_order))
 					order::set_state(matched_order, constants::Filled())
@@ -154,6 +162,7 @@ module resource_account::trading_platform {
 			order::heap_insert(&mut market.sellOrders, id);
 		};
 
+
 		margin_amount = margin_amount + calculate_seller_margin(price, units);
 		let success = try_and_acquire(seller, margin_amount);
 
@@ -162,12 +171,14 @@ module resource_account::trading_platform {
 			abort error::resource_exhausted(ENOT_ENOUGH_FUNDS)
 		};
 
+		order::deposit_margin(id, margin_amount);
 		while (vector::length(&tbe_order) != 0) {
 			execute_trade<base, asset>(
-				id,
 				vector::pop_back(&mut tbe_order),
+				id,
 				vector::pop_back(&mut tbe_price),
 				vector::pop_back(&mut tbe_units),
+				market,
 			)
 		}
 	}
@@ -180,7 +191,7 @@ module resource_account::trading_platform {
 		acquires ContractStorage, UserResource, Market {
 		check_registration(buyer);
 		create_market_if_not_exists<base, asset>();
-		check_and_update_expiration<base, asset>();
+		let expiration_time = check_and_update_expiration<base, asset>();
 	
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
 		let userStore = borrow_global_mut<UserResource>(signer::address_of(buyer));
@@ -194,6 +205,7 @@ module resource_account::trading_platform {
 			flexible,
 			constants::Active(),
 			constants::Long(),
+			expiration_time,
 		);
 
 		//	Add the order's ID to the user's list
@@ -254,8 +266,8 @@ module resource_account::trading_platform {
 			order::heap_insert(&mut market.buyOrders, id);
 		};
 
-		margin_amount = margin_amount + calculate_buyer_margin(price, units);
 		
+		margin_amount = margin_amount + calculate_buyer_margin(price, units);
 		let success = try_and_acquire(buyer, margin_amount);
 
 		if (!success) {
@@ -263,12 +275,14 @@ module resource_account::trading_platform {
 			abort error::resource_exhausted(ENOT_ENOUGH_FUNDS)
 		};
 
+		order::deposit_margin(id, margin_amount);
 		while (vector::length(&tbe_order) != 0) {
 			execute_trade<base, asset>(
 				id,
 				vector::pop_back(&mut tbe_order),
 				vector::pop_back(&mut tbe_price),
 				vector::pop_back(&mut tbe_units),
+				market,
 			)
 		}
 	}
@@ -277,7 +291,7 @@ module resource_account::trading_platform {
 		acquires ContractStorage, UserResource, Market {
 		check_registration(buyer);
 		create_market_if_not_exists<base, asset>();
-		check_and_update_expiration<base, asset>();
+		let expiration_time = check_and_update_expiration<base, asset>();
 	
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
 
@@ -295,6 +309,7 @@ module resource_account::trading_platform {
 			true,
 			constants::Active(),
 			constants::Long(),
+			expiration_time,
 		);
 
 		let (_, matched) = order::heap_match(&mut market.sellOrders, dummy_order);
@@ -320,11 +335,13 @@ module resource_account::trading_platform {
 			} else 0u64;
 
 			if (!exit) {
+				order::deposit_margin(dummy_order, margin);
 				execute_trade<base, asset>(
 					dummy_order,
 					matched_order,
 					strike_price,
 					strike_units,
+					market,
 				);
 			};
 
@@ -352,7 +369,7 @@ module resource_account::trading_platform {
 		acquires ContractStorage, UserResource, Market {
 		check_registration(buyer);
 		create_market_if_not_exists<base, asset>();
-		check_and_update_expiration<base, asset>();
+		let expiration_time = check_and_update_expiration<base, asset>();
 	
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
 
@@ -364,6 +381,7 @@ module resource_account::trading_platform {
 			true,
 			constants::Active(),
 			constants::Short(),
+			expiration_time,
 		);
 
 		let (_, matched) = order::heap_match(&mut market.sellOrders, dummy_order);
@@ -393,11 +411,13 @@ module resource_account::trading_platform {
 			};
 
 			if (!exit) {
+				order::deposit_margin(dummy_order, margin);
 				execute_trade<base, asset>(
 					dummy_order,
 					matched_order,
 					strike_price,
 					strike_units,
+					market,
 				);
 			};
 			
@@ -423,7 +443,7 @@ module resource_account::trading_platform {
 		acquires ContractStorage, UserResource, Market {
 		check_registration(seller);
 		create_market_if_not_exists<base, asset>();
-		check_and_update_expiration<base, asset>();
+		let expiration_time = check_and_update_expiration<base, asset>();
 	
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
 
@@ -441,6 +461,7 @@ module resource_account::trading_platform {
 			true,
 			constants::Active(),
 			constants::Short(),
+			expiration_time,
 		);
 
 		let (_, matched) = order::heap_match(&mut market.buyOrders, dummy_order);
@@ -466,12 +487,14 @@ module resource_account::trading_platform {
 			} else 0u64 ;
 
 			if (!exit) {
+				order::deposit_margin(dummy_order, margin);
 				units = units + strike_units ;
 				execute_trade<base, asset>(
 					matched_order,
 					dummy_order,
 					strike_price,
 					strike_units,
+					market,
 				);
 			};
 
@@ -498,7 +521,7 @@ module resource_account::trading_platform {
 		acquires ContractStorage, UserResource, Market {
 		check_registration(seller);
 		create_market_if_not_exists<base, asset>();
-		check_and_update_expiration<base, asset>();
+		let expiration_time = check_and_update_expiration<base, asset>();
 	
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
 
@@ -510,6 +533,7 @@ module resource_account::trading_platform {
 			true,
 			constants::Active(),
 			constants::Short(),
+			expiration_time,
 		);
 
 		let (_, matched) = order::heap_match(&mut market.buyOrders, dummy_order);
@@ -539,11 +563,13 @@ module resource_account::trading_platform {
 			};
 
 			if (!exit) {
+				order::deposit_margin(dummy_order, margin);
 				execute_trade<base, asset>(
-					dummy_order,
 					matched_order,
+					dummy_order,
 					strike_price,
 					strike_units,
+					market,
 				);
 			};
 
@@ -570,7 +596,7 @@ module resource_account::trading_platform {
 	*	Cancel a previuously made
 	*	request by the user
 	*/
-	public entry fun cancel_request<base, asset>(user: &signer, order_id: u64) acquires ContractStorage, Market {
+	public entry fun cancel_request<base, asset>(user: &signer, order_id: u64) acquires ContractStorage {
 		check_registration(user);
 		create_market_if_not_exists<base, asset>();
 		check_and_update_expiration<base, asset>();
@@ -583,7 +609,7 @@ module resource_account::trading_platform {
 		//	Return the token back to user
 		let price = order::price(order_id);
 		let units = order::units(order_id);
-		let margin = if (order::pos(order_id) == constants::Long())
+		let margin = if (order::is_long(order_id))
 			calculate_buyer_margin(price, units)
 		else
 			calculate_seller_margin(price, units)
@@ -592,38 +618,47 @@ module resource_account::trading_platform {
 		transfer_to<base>(signer::address_of(user), margin, storage);
 	}
 
-	public entry fun close_position<base, asset>(user: &signer, position_id: u64)
+	public entry fun close_order<base, asset>(user: &signer, order_id: u64)
 		acquires ContractStorage, UserResource, Market {
 
 		check_registration(user);
 		create_market_if_not_exists<base, asset>();
 		check_and_update_expiration<base, asset>();
 
-		vector::remove_value(&mut borrow_global_mut<UserResource>(signer::address_of(user)).positions, &position_id);
+		vector::remove_value(&mut borrow_global_mut<UserResource>(signer::address_of(user)).orders, &order_id);
+		order::set_state(order_id, constants::Cancelled());
 
 		let storage = borrow_global_mut<ContractStorage>(@resource_account);
 		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
-		let strike_price = position::strike_price(position_id);
-		let strike_units = position::strike_units(position_id);
+		let (total_strike_units, total_stake) = {
+			let strike_units = 0u64;
+			let stake = 0u64;
+			vector::for_each(order::list_positions(order_id), |pos| {
+				strike_units = strike_units + position::strike_units(pos);
+				stake = stake + position::strike_price(pos) * position::strike_units(pos);
+			});
+			(strike_units, stake)
+		};
+		let total_deposited_margin = order::margin_deposits(order_id);
 
 
 		// Assuming margin always stays positive
-		if (!position::is_expired(position_id)) {
-			if (position::is_long(position_id)) {
-				let deposited_margin = position::margin_deposits(position_id);
+		if (!order::is_expired(order_id)) {
+			if (order::is_long(order_id)) {
 
 				let dummy_order = order::newOrder(
 					0,
-					strike_units,
+					total_strike_units,
 					@resource_account,
 					constants::Market(),
 					true,
 					constants::Active(),
 					constants::Short(),
+					order::expiry(order_id),
 				);
 
 				let (m_units, m_orders) = order::heap_match(&mut market.buyOrders, dummy_order);
-				if (m_units >= strike_units) {
+				if (m_units >= total_strike_units) {
 					let quotation = 0u64;
 					vector::for_each_ref(&m_orders, |id_ref| {
 						let order = *id_ref;
@@ -631,35 +666,33 @@ module resource_account::trading_platform {
 						quotation = quotation + (order::price(order)*order::units(order));
 					});
 
-					if (m_units > strike_units) {
+					if (m_units > total_strike_units) {
 						let last = *vector::borrow(&m_orders, vector::length(&m_orders)-1);
-						quotation = quotation - (order::price(last)*(m_units - strike_units));
-						order::set_units(last, m_units - strike_units);
+						quotation = quotation - (order::price(last)*(m_units - total_strike_units));
+						order::set_units(last, m_units - total_strike_units);
 						order::set_state(last, constants::Partial());
 						order::heap_insert(&mut market.buyOrders, last);
 					};
 
-					let stake = strike_price*strike_units;
-					let final_margin = (deposited_margin + quotation) - stake;
+					let final_margin = (total_deposited_margin + quotation) - total_stake;
 					transfer_to<base>(signer::address_of(user), final_margin, storage);
 				} else {
 					abort error::invalid_state(ENOT_ENOUGH_LIQUIDITY)
 				};
 			} else {
-				let deposited_margin = position::margin_deposits(position_id);
-
 				let dummy_order = order::newOrder(
 					MAX_PRICE,
-					strike_units,
+					total_strike_units,
 					@resource_account,
 					constants::Market(),
 					true,
 					constants::Active(),
 					constants::Long(),
+					order::expiry(order_id),
 				);
 
 				let (m_units, m_orders) = order::heap_match(&mut market.sellOrders, dummy_order);
-				if (m_units >= strike_units) {
+				if (m_units >= total_strike_units) {
 					let quotation = 0u64;
 					vector::for_each_ref(&m_orders, |id_ref| {
 						let order = *id_ref;
@@ -667,16 +700,15 @@ module resource_account::trading_platform {
 						quotation = quotation + (order::price(order)*order::units(order));
 					});
 
-					if (m_units > strike_units) {
+					if (m_units > total_strike_units) {
 						let last = *vector::borrow(&m_orders, vector::length(&m_orders)-1);
-						quotation = quotation - (order::price(last)*(m_units - strike_units));
-						order::set_units(last, m_units - strike_units);
+						quotation = quotation - (order::price(last)*(m_units - total_strike_units));
+						order::set_units(last, m_units - total_strike_units);
 						order::set_state(last, constants::Partial());
 						order::heap_insert(&mut market.sellOrders, last);
 					};
 
-					let stake = strike_price*strike_units;
-					let final_margin = (deposited_margin + stake) - quotation;
+					let final_margin = (total_deposited_margin + total_stake) - quotation;
 					transfer_to<base>(signer::address_of(user), final_margin, storage);
 				} else {
 					abort error::invalid_state(ENOT_ENOUGH_LIQUIDITY)
@@ -684,25 +716,32 @@ module resource_account::trading_platform {
 			};
 		} else {
 			let market_price = market.price;
-			if(position::is_long(position_id)) {
-				let margin = (position::margin_deposits(position_id) + (market_price * strike_units)) - (strike_price*strike_units);
-				transfer_to<AptosCoin>(signer::address_of(user), margin, storage);
+			if(order::is_long(order_id)) {
+				let margin = (total_deposited_margin + (market_price * total_strike_units)) - total_stake;
+				transfer_to<base>(signer::address_of(user), margin, storage);
 			} else {
-				let margin = (position::margin_deposits(position_id) + (strike_price*strike_units) - (market_price * strike_units));
-				transfer_to<AptosCoin>(signer::address_of(user), margin, storage);
+				let margin = (total_deposited_margin + total_stake - (market_price * total_strike_units));
+				transfer_to<base>(signer::address_of(user), margin, storage);
 			}
+		};
+
+	}
+
+	public entry fun refill_margin(user: &signer, order_id: u64, amount: u64) {
+		let success = try_and_acquire(user, amount);
+		if (success) {
+			order::deposit_margin(order_id, amount);
 		};
 	}
 
-	public entry fun refill_margin(user: &signer, position_id: u64, amount: u64) {
-		let success = try_and_acquire(user, amount);
-		if (success) {
-			position::deposit_margin(position_id, amount);
-		};
+	#[view]
+	public fun market_price<base, asset>(): u64 acquires Market {
+		assert!(exists<Market<base,asset>>(@resource_account), error::not_found(EMARKET_NOT_FOUND));
+		borrow_global<Market<base, asset>>(@resource_account).price
 	}
 
 	inline fun destroy_user_resource(user: address) {
-		let UserResource { orders: _x, positions: _y } = move_from<UserResource>(user);
+		let UserResource { orders: _x } = move_from<UserResource>(user);
 	}
 
 	inline fun check_registration(user: &signer) {
@@ -725,13 +764,13 @@ module resource_account::trading_platform {
 		};
 	}
 
-	inline fun check_and_update_expiration<base, asset>() acquires ContractStorage, Market {
+	inline fun check_and_update_expiration<base, asset>(): u64 acquires ContractStorage {
 		let storage = borrow_global_mut<ContractStorage>(@resource_account);
-		let market = borrow_global_mut<Market<base, asset>>(@resource_account);
 		let now = timestamp::now_microseconds();
 		if (now >= storage.global_expiration_time) {
 			storage.global_expiration_time = ((now - storage.global_expiration_time)/ONE_DAY_MS)*ONE_DAY_MS + ONE_DAY_MS ;
 		};
+		storage.global_expiration_time
 	}
 
 	inline fun fetch_balance(addr: address): u64 {
@@ -750,6 +789,7 @@ module resource_account::trading_platform {
 		flexible: bool,
 		state: u8,
 		position: u8,
+		expiration_time: u64,
 	): u64 acquires UserResource {
 		let order = order::newOrder(
 			price,
@@ -759,6 +799,7 @@ module resource_account::trading_platform {
 			flexible,
 			state,
 			position,
+			expiration_time,
 		);
 		add_to_orders(user, order);
 		order
@@ -804,38 +845,29 @@ module resource_account::trading_platform {
 		return true
 	}
 
-	fun execute_trade<base, asset>(buy_order: u64, sell_order: u64, price: u64, units: u64) acquires ContractStorage, UserResource {
-		let storage = borrow_global<ContractStorage>(@resource_account);
-		let long_margin = calculate_buyer_margin(price, units);
-		let short_margin = calculate_seller_margin(price, units);
-
+	fun execute_trade<base, asset>(buy_order: u64, sell_order: u64, price: u64, units: u64, market: &mut Market<base, asset>) {
 		//	Create Positions
 		create_position_for(
 			buy_order,
-			constants::Long(),
 			price,
 			units,
-			long_margin,
-			storage.global_expiration_time,
 		);
 		create_position_for(
 			sell_order,
-			constants::Short(),
 			price,
 			units,
-			short_margin,
-			storage.global_expiration_time,
 		);
+
+		market.price = price;
 	}
 
 	inline fun is_market_order(order: u64): bool {
 		order::price(order) == MAX_PRICE || order::price(order) == 0
 	}
 
-	inline fun create_position_for(order: u64, type: u8, strike_price: u64, strike_units: u64, margin_balance: u64, expiration_time: u64): u64 acquires UserResource {
-		let pos = position::open_position(order, type, strike_price, strike_units, margin_balance, expiration_time);
+	inline fun create_position_for(order: u64, strike_price: u64, strike_units: u64): u64 {
+		let pos = position::open_position(order, strike_price, strike_units);
 		order::add_position(order, pos);
-		vector::push_back(&mut borrow_global_mut<UserResource>(order::of(order)).positions, pos);
 		pos
 	}
 
@@ -876,7 +908,7 @@ module resource_account::trading_platform {
 	}
 
 	#[test_only]
-	public fun limit_short_cancel(user: &signer, id: u64) acquires ContractStorage, Market {
+	public fun limit_short_cancel(user: &signer, id: u64) acquires ContractStorage {
 		let user_addr = signer::address_of(user);
 		let before_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
 
@@ -887,7 +919,7 @@ module resource_account::trading_platform {
 	}
 
 	#[test_only]
-	public fun limit_long_cancel(user: &signer, id: u64) acquires ContractStorage, Market {
+	public fun limit_long_cancel(user: &signer, id: u64) acquires ContractStorage {
 		let user_addr = signer::address_of(user);
 		let before_bal = aptos_framework::coin::balance<AptosCoin>(user_addr);
 		
@@ -967,6 +999,11 @@ module resource_account::trading_platform {
 		position::initialize_module(admin);
 		dummy_coin::initialize_module(admin);
 		initialize_module(admin);
+	}
+
+	#[test_only]
+	fun balance(user: address): u64 {
+		aptos_framework::coin::balance<AptosCoin>(user)
 	}
 
 	#[test(user = @resource_account)]
@@ -1195,11 +1232,7 @@ module resource_account::trading_platform {
 		let (_, _, _, state) = fetch_order_details(seller3, 0);
 		assert!(state == constants::Active(), 4);
 
-		let pids = borrow_global<UserResource>(signer::address_of(buyer3)).positions;
-		assert!(vector::length(&pids) == 2, 5);
-		vector::for_each(pids, |position| {
-			close_position<AptosCoin, DummyCoin>(buyer3, position);
-		});
+		close_order<AptosCoin, DummyCoin>(buyer3, 6);
 
 		let bal = aptos_framework::coin::balance<AptosCoin>(signer::address_of(buyer3));
 		assert!(bal == 486, 6);
@@ -1249,14 +1282,53 @@ module resource_account::trading_platform {
 		let (_, _, _, state) = fetch_order_details(seller1, 0);
 		assert!(state == constants::Active(), 4);
 
-		let pids = borrow_global<UserResource>(signer::address_of(seller3)).positions;
-		assert!(vector::length(&pids) == 2, 5);
-		vector::for_each(pids, |position| {
-			close_position<AptosCoin, DummyCoin>(seller3, position);
-		});
+		close_order<AptosCoin, DummyCoin>(seller3, 6);
 
 		let bal = aptos_framework::coin::balance<AptosCoin>(signer::address_of(seller3));
 		assert!(bal == 1986, 6);
+
+		aptos_framework::coin::destroy_mint_cap(mint_cap);
+	}
+
+
+	#[test(admin = @resource_account)]
+	fun test_order_expiry(admin: signer) acquires ContractStorage, UserResource , Market{
+		setup(&admin);
+		let mint_cap = initialize_aptos_coin();
+
+		let seller1 = &create_user_with_address(@0xF001);
+		let buyer1 = &create_user_with_address(@0xF002);
+
+		mint_and_deposit(signer::address_of(buyer1), 2000, &mint_cap);
+		mint_and_deposit(signer::address_of(seller1), 2000, &mint_cap);
+
+		make_limit_long(buyer1, 99, 5, false);
+		make_limit_short(seller1, 99, 6, true);
+
+		assert!(balance(signer::address_of(buyer1)) == 2000-247, 0);
+		assert!(balance(signer::address_of(seller1)) == 2000-1188, 0);
+		assert!(balance(@resource_account) == 247+1188, 0);
+
+
+		timestamp::update_global_time_for_test(timestamp::now_microseconds() + 3*ONE_DAY_MS);
+
+		assert!(order::is_expired(1), 0);
+		assert!(order::is_expired(2), 1);
+
+		close_order<AptosCoin, DummyCoin>(buyer1, 1);
+		assert!(aptos_framework::coin::balance<AptosCoin>(signer::address_of(buyer1)) == 2000, 2);
+		close_order<AptosCoin, DummyCoin>(seller1, 2);
+		assert!(aptos_framework::coin::balance<AptosCoin>(signer::address_of(seller1)) == 2000, 2);
+
+		make_limit_long(buyer1, 99, 5, true);
+		assert!(balance(signer::address_of(buyer1)) == 2000-247, 3);
+		let (_, _, _, state) = fetch_order_details(buyer1, 0);
+		assert!(state == constants::Active(), 4);
+
+		let new_expiration = borrow_global<ContractStorage>(@resource_account).global_expiration_time;
+		assert!(new_expiration != order::expiry(1), 5);
+		assert!(new_expiration != order::expiry(1), 6);
+		assert!(new_expiration == order::expiry(3), 7);
 
 		aptos_framework::coin::destroy_mint_cap(mint_cap);
 	}

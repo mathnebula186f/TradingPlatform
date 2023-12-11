@@ -1,6 +1,6 @@
 module resource_account::position {
 	use aptos_framework::table::{Self, Table};
-	use resource_account::constants;
+	#[test_only]
 	use aptos_framework::timestamp;
 
 	friend resource_account::trading_platform;
@@ -8,11 +8,8 @@ module resource_account::position {
 	struct Position has store {
 		position_id: u64,
 		order_id: u64,
-		type: u8,
 		strike_price: u64,
 		strike_units: u64,
-		margin_deposits: u64,
-		expiration_time: u64,
 	}
 
 	struct PositionStore has key {
@@ -30,11 +27,8 @@ module resource_account::position {
 
 	public(friend) fun open_position(
 		order_id: u64,
-		type: u8,
 		strike_price: u64,
 		strike_units: u64,
-		margin_deposits: u64,
-		expiration_time: u64,
 	) : u64 acquires PositionStore {
 		let storage = borrow_global_mut<PositionStore>(@resource_account);
 		let id = storage.id;
@@ -44,25 +38,8 @@ module resource_account::position {
 			strike_price,
 			strike_units,
 			order_id,
-			type,
-			expiration_time,
-			margin_deposits,
 		});
-		// std::debug::print(fetch_position_ref(id));
 		id
-	}
-
-	public(friend) fun deposit_margin(position: u64, amount: u64) acquires PositionStore {
-		let ref = fetch_position_ref_mut(position);
-		ref.margin_deposits = ref.margin_deposits + amount;
-	}
-
-	public fun is_expired(position: u64): bool acquires PositionStore {
-		fetch_position_ref(position).expiration_time < timestamp::now_microseconds()
-	}
-
-	public fun is_long(position: u64): bool acquires PositionStore {
-		fetch_position_ref(position).type  == constants::Long()
 	}
 
 	public fun strike_price(position: u64): u64 acquires PositionStore {
@@ -75,10 +52,6 @@ module resource_account::position {
 
 	public fun order(position: u64): u64 acquires PositionStore {
 		fetch_position_ref(position).order_id
-	}
-
-	public fun margin_deposits(position: u64): u64 acquires PositionStore {
-		fetch_position_ref(position).margin_deposits
 	}
 	
 	inline fun fetch_position_ref(position: u64): &Position acquires PositionStore {

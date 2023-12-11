@@ -6,8 +6,6 @@ module resource_account::order {
 	use std::vector;
 	use resource_account::constants;
 	use aptos_framework::table::{Self, Table};
-
-	#[test_only]
 	use aptos_framework::timestamp;
 
 	friend resource_account::trading_platform;
@@ -23,11 +21,13 @@ module resource_account::order {
 		price: u64,
 		target_units: u64,
 		remaining_units: u64,
+		margin_deposits: u64,
 
 		positions: vector<u64>,
 
 		of: address,
 		timestamp: u64,
+		expiration_time: u64,
 
 		flexible: bool,
 
@@ -74,11 +74,13 @@ module resource_account::order {
 			price: 0,
 			target_units: 0,
 			remaining_units: 0,
+			margin_deposits: 0,
 
 			positions: vector::empty<u64>(),
 
 			of: @0x0,
 			timestamp: 0,
+			expiration_time: 0,
 			
 			flexible: false,
 			
@@ -168,11 +170,9 @@ module resource_account::order {
 					break
 				};
 
-				// std::debug::print(next_candidate);
-
 				let fixed = (top_fixed_order == next_candidate);
 
-				if (next_candidate.state != constants::Cancelled()) {
+				if (next_candidate.state != constants::Cancelled() && next_candidate.expiration_time > timestamp::now_microseconds()) {
 					if ((matchedUnits + next_candidate.remaining_units > requiredUnits) && fixed) {
 						vector::push_back(&mut residue, next_candidate.id);
 					} else {
@@ -454,6 +454,7 @@ module resource_account::order {
 		flexible: bool,
 		state: u8,
 		position: u8,
+		expiration_time: u64,
 	) : u64 acquires OrderStore {
 		let storage = borrow_global_mut<OrderStore>(@resource_account);
 		let id = storage.id;
@@ -466,11 +467,13 @@ module resource_account::order {
 			price,
 			target_units: units,
 			remaining_units: units,
+			margin_deposits: 0,
 
 			positions: vector::empty<u64>(),
 
 			of,
 			timestamp: aptos_framework::timestamp::now_microseconds(),
+			expiration_time,
 
 			flexible,
 
@@ -479,54 +482,87 @@ module resource_account::order {
 		id
 	}
 
-	public fun set_state(order: u64, state: u8) acquires OrderStore {
+	public(friend) fun set_state(order: u64, state: u8) acquires OrderStore {
 		fetch_order_ref_mut(order).state = state;
 	}
 
-	public fun set_units(order: u64, units: u64) acquires OrderStore {
+	public(friend) fun set_units(order: u64, units: u64) acquires OrderStore {
 		fetch_order_ref_mut(order).remaining_units = units;
 	}
 
-	public fun set_fixed(order: u64) acquires OrderStore {
+	public(friend) fun set_fixed(order: u64) acquires OrderStore {
 		fetch_order_ref_mut(order).flexible = false;
 	}
 
-	public fun add_position(order: u64, position: u64) acquires OrderStore {
+	public(friend) fun set_positions(order: u64, pos: vector<u64>) acquires OrderStore {
+		fetch_order_ref_mut(order).positions = pos;
+	}
+
+	public(friend) fun add_position(order: u64, position: u64) acquires OrderStore {
 		vector::push_back(&mut fetch_order_ref_mut(order).positions, position);
+	}
+
+	public(friend) fun deposit_margin(order: u64, amount: u64) acquires OrderStore {
+		let ref = fetch_order_ref_mut(order);
+		ref.margin_deposits = ref.margin_deposits + amount;
+	}
+
+	#[view]
+	public fun list_positions(order: u64): vector<u64> acquires OrderStore {
+		fetch_order_ref(order).positions
 	}
 
 	public fun of(order: u64): address acquires OrderStore {
 		fetch_order_ref(order).of
 	}
 
+	#[view]
 	public fun price(order: u64) : (u64) acquires OrderStore {
 		fetch_order_ref(order).price
 	}
 
+	#[view]
 	public fun units(order: u64) : (u64) acquires OrderStore {
 		fetch_order_ref(order).remaining_units
 	}
 
+	#[view]
 	public fun state(order: u64) : (u8) acquires OrderStore {
 		fetch_order_ref(order).state
 	}
 
+	#[view]
 	public fun type(order: u64): (u8) acquires OrderStore {
 		fetch_order_ref(order).type
-	}
-
-	public fun pos(order: u64): (u8) acquires OrderStore {
-		fetch_order_ref(order).position
 	}
 
 	public fun time(order: u64): (u64) acquires OrderStore {
 		fetch_order_ref(order).timestamp
 	}
+	
+	#[view]
+	public fun expiry(order: u64): u64 acquires OrderStore {
+		fetch_order_ref(order).expiration_time
+	}
 
+	#[view]
+	public fun margin_deposits(order: u64): u64 acquires OrderStore {
+		fetch_order_ref(order).margin_deposits
+	}
+
+	#[view]
 	public fun is_flexible(order: u64): bool acquires OrderStore {
 		fetch_order_ref(order).flexible
 	}
 
+	#[view]
+	public fun is_expired(order: u64): bool acquires OrderStore {
+		fetch_order_ref(order).expiration_time <= timestamp::now_microseconds()
+	}
+
+	public fun is_long(order: u64): bool acquires OrderStore {
+		fetch_order_ref(order).position  == constants::Long()
+	}
 
 	inline fun fetch_order_ref(order: u64): &Order acquires OrderStore {
 		table::borrow(&borrow_global<OrderStore>(@resource_account).orders, order)
@@ -574,6 +610,7 @@ module resource_account::order {
 				false,
 				constants::Active(),
 				constants::Short(),
+				0xFEE,
 			));
 		};
 
@@ -628,6 +665,7 @@ module resource_account::order {
 				false,
 				constants::Active(),
 				constants::Short(),
+				0xFEE,
 			));
 		};
 
@@ -679,6 +717,7 @@ module resource_account::order {
 				vector::pop_back(&mut flexibility),
 				constants::Active(),
 				constants::Short(),
+				0xFEE,
 			));
 		};
 
@@ -721,6 +760,7 @@ module resource_account::order {
 				false,
 				constants::Active(),
 				constants::Short(),
+				0xFEE,
 			));
 		};
 
@@ -738,6 +778,7 @@ module resource_account::order {
 			true,
 			constants::Active(),
 			constants::Long(),
+			0xFEE,
 		);
 
 		let (matched_units, _) = heap_match(&mut minHeap, buy_order);
