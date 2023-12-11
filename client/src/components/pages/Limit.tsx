@@ -13,7 +13,7 @@ const Limit = () => {
   const [size, setSize] = useState('');
   const [error, setError] = useState('');
 
-  const handleBuy = () => {
+  const handleBuy = async () => {
     // Basic validation
     if (!price || !size) {
       setError('Both fields are required');
@@ -24,11 +24,23 @@ const Limit = () => {
     setError('');
 
     // Perform actions with the submitted values
-    console.log('Price:', price);
-    console.log('Size:', size);
+    // TODO : yaha pe button click karke buy
+    try {
+      // Send the data to the server
+      const response = await axios.post('/post', {
+        price,
+        size,
+      });
+
+      // Handle the response (if needed)
+      console.log('Server Response:', response.data);
+    } catch (error) {
+      // Handle any errors during the request
+      console.error('Error:', error.message);
+    }
   };
 
-  const handleSell = () => {
+  const handleSell = async () => {
     // Basic validation
     if (!price || !size) {
       setError('Both fields are required');
@@ -39,8 +51,20 @@ const Limit = () => {
     setError('');
 
     // Perform actions with the submitted values
-    console.log('Price:', price);
-    console.log('Size:', size);
+    // TODO : yaha pe button click karke sell
+    try {
+      // Send the data to the server
+      const response = await axios.post('/post', {
+        price,
+        size,
+      });
+
+      // Handle the response (if needed)
+      console.log('Server Response:', response.data);
+    } catch (error) {
+      // Handle any errors during the request
+      console.error('Error:', error.message);
+    }
   };
 
   return (

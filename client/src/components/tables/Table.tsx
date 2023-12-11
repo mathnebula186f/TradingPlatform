@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FilterMatchMode, FilterOperator, PrimeReactProvider } from 'primereact/api';
 import { DataTable, DataTableFilterMeta } from 'primereact/datatable';
 import { Column, ColumnFilterElementTemplateOptions } from 'primereact/column';
@@ -42,6 +42,7 @@ const defaultFilters: DataTableFilterMeta = {
 export default function AdvancedFilterDemo() {
     const [filters, setFilters] = useState<DataTableFilterMeta>(defaultFilters);
     const [statuses] = useState<string[]>(['Unsold', 'Sold']);
+    const [txns, setTxns] = useState([]);
 
     const getSeverity = (status: string) => {
         switch (status) {
@@ -53,6 +54,10 @@ export default function AdvancedFilterDemo() {
         }
     };
     
+    useEffect(() => {
+        //TODO : Yaha pe graph ke liye txns ko fetch karo
+      }, []);
+
     const formatCurrency = (value: number) => {
         return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
     };
