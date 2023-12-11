@@ -4,10 +4,6 @@ import { Provider, Network } from "aptos";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { useState, useEffect } from "react";
 
-import { Wrap, WrapItem, Text } from '@chakra-ui/react';
-import { Link } from 'react-router-dom';
-import Sidebar from './components/Sidebar';
-
 import "@aptos-labs/wallet-adapter-ant-design/dist/index.css";
 
 import Navbar from "./components/Navbar/Navbar";
@@ -164,17 +160,6 @@ function App() {
 	};
 	return (
 		<>
-			<Routes>
-				<Route path="/" element={<Home />} />
-				<Route path="/a" element={<Cryptopage name={"A"} />} />
-				<Route path="/b" element={<Cryptopage name={"B"} />} />
-				<Route path="/c" element={<Cryptopage name={"C"} />} />
-				<Route path="/d" element={<Cryptopage name={"D"} />} />
-				<Route path="/e" element={<Cryptopage name={"E"} />} />
-				<Route path="/f" element={<Cryptopage name={"F"} />} />
-				<Route path="/g" element={<Cryptopage name={"G"} />} />
-				<Route path="/h" element={<Cryptopage name={"H"} />} />
-			</Routes>
 			<Navbar/>
 			<Spin spinning={transactionInProgress}>
 				{!userRegistered ? (

@@ -20,7 +20,7 @@ root.render(
 				<Routes>
 					<Route path="/" element={<App />} />
 					<Route path="/profile" element={<ProfilePage />} />
-					<Route path="/" element={<Home />} />
+					<Route path="/home" element={<Home />} />
 					<Route path="/a" element={<Cryptopage name={"A"} />} />
 					<Route path="/b" element={<Cryptopage name={"B"} />} />
 					<Route path="/c" element={<Cryptopage name={"C"} />} />
