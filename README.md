@@ -89,4 +89,13 @@ The `initialize_module` function is used to initialize the module for testing pu
 For any questions or issues, please contact the maintainers of this repository.
 
 ### How to Run
-`npm start`
+1. ``cd move``
+1.Run `Aptos move compile` to Compile the code
+2.Run  ``Aptos init`` in case .aptos folder is not there
+3. ``> aptos move create-resource-account-and-publish-package --address-name resource_account --seed "$(seed)"``
+in case there is a error 
+``Aptos account fund-with-faucet``
+4. `` cd .. ``
+5. `` cd client ``
+6. `` npm start ``
+
