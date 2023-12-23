@@ -87,3 +87,6 @@ The PositionStore struct contains a table of positions and an ID for position ma
 The `initialize_module` function is used to initialize the module for testing purposes.
 
 For any questions or issues, please contact the maintainers of this repository.
+
+### How to Run
+``npm start``
