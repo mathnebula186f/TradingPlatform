@@ -10,8 +10,8 @@ import Navbar from "./components/Navbar/Navbar";
 import { Route, Routes } from "react-router-dom";
 
 export const provider = new Provider(Network.DEVNET);
-export const moduleAddress = "0xf47fe7581a575205d4b6b08d95e84b96725fdb93dfb112691660c9a133eeb312";
-export const moduleName = "TradingPlatform";
+export const moduleAddress = "0x5ee007992ae8b720030c92f3fa5eb94be806858967a3359f99224e6bca65b7b1";
+export const moduleName = "trading_platform";
 
 
 function App() {
@@ -98,7 +98,7 @@ function App() {
 		try {
 			const UserResource = await provider.getAccountResource(
 				account.address,
-				`${moduleAddress}::${moduleName}::UserResource`
+				`${moduleAddress}::${moduleName}::UserResource<0x1::aptos_coin::AptosCoin,${moduleAddress}::coins::BTC>`
 			);
 			console.log(UserResource)
 			setUserRegistered(true);
@@ -115,13 +115,14 @@ function App() {
 		const payload = {
 			type: "entry_function_payload",
 			function: `${moduleAddress}::${moduleName}::register`,
-			type_arguments: [],
+			type_arguments: [`0x1::aptos_coin::AptosCoin`, `${moduleAddress}::coins::BTC`],
 			arguments: [],
 		};
 		try {
 			const response = await wallet.signAndSubmitTransaction(payload);
 			await provider.waitForTransaction(response.hash);
 			setUserRegistered(true);
+			// (window as any).history.push('/home')
 		} catch (error: any) {
 			console.log(error)
 			setUserRegistered(false);

@@ -1,0 +1,49 @@
+{
+    "type": "0x7395a6de338a81da06e862dca652336d004111a84086da21e01fa5e0f8611dd5::trading_platform::Market<0x1::aptos_coin::AptosCoin, 0x7395a6de338a81da06e862dca652336d004111a84086da21e01fa5e0f8611dd5::coins::BTC>",
+    "data": {
+        "buyOrders": {
+            "arr": [
+                {
+                    "fixedOrders": [
+                        "4",
+                        "5"
+                    ],
+                    "flexibleOrders": [],
+                    "price": "1234"
+                },
+                {
+                    "fixedOrders": [
+                        "1"
+                    ],
+                    "flexibleOrders": [],
+                    "price": "1"
+                },
+                {
+                    "fixedOrders": [],
+                    "flexibleOrders": [
+                        "2"
+                    ],
+                    "price": "50"
+                }
+            ],
+            "type": 0
+        },
+        "expiration_prices": {
+            "handle": "0xfc9d6a643853882ece5c022dd071ad30b47418a4b5d170554ba5d9129ab5d2fe"
+        },
+        "price": "0",
+        "sellOrders": {
+            "arr": [
+                {
+                    "fixedOrders": [],
+                    "flexibleOrders": [
+                        "3"
+                    ],
+                    "price": "100"
+                }
+            ],
+            "type": 1
+        },
+        "transactions": []
+    }
+}

@@ -7,14 +7,28 @@ import {
   Button,
   VStack,
 } from '@chakra-ui/react';
+import { useWallet } from "@aptos-labs/wallet-adapter-react";
+import { Provider, Network } from "aptos";
 
-const Market = () => {
-  const [size, setSize] = useState('');
+export const provider = new Provider(Network.DEVNET);
+export const moduleAddress = "0x5ee007992ae8b720030c92f3fa5eb94be806858967a3359f99224e6bca65b7b1";
+export const moduleName = "trading_platform";
+
+interface AdvancedFilterDemoProps {
+  name: string; 
+}
+
+
+
+const Market: React.FC<AdvancedFilterDemoProps>  = (props) => {
+  const [amount, setAmount] = useState('');
   const [error, setError] = useState('');
+  const { account } = useWallet();
+  const wallet = (window as any).aptos;
 
   const handleSell = async () => {
     // Basic validation
-    if (!size) {
+    if (!amount) {
       setError('The fields are required');
       return;
     }
@@ -24,23 +38,29 @@ const Market = () => {
 
     // Perform actions with the submitted values
     // TODO : yaha pe button click karke sell
+    const payload = {
+			type: "entry_function_payload",
+			function: `${moduleAddress}::${moduleName}::market_short`,
+			type_arguments: [`0x1::aptos_coin::AptosCoin`,`${moduleAddress}::coins::${props.name}`],
+			arguments: [Number(amount)*100000000],
+		};
     try {
       // Send the data to the server
-      const response = await axios.post('/post', {
-        size,
-      });
-
+       const response = await wallet.signAndSubmitTransaction(payload);
+			// console.log(response)
+			await provider.waitForTransaction(response.hash);
       // Handle the response (if needed)
       console.log('Server Response:', response.data);
+      window.location.reload();
     } catch (error) {
       // Handle any errors during the request
-      console.error('Error:', error.message);
+      console.error('Error:', error);
     }
   };
 
   const handleBuy = async () => {
     // Basic validation
-    if (!size) {
+    if (!amount) {
       setError('The fields are required');
       return;
     }
@@ -50,30 +70,37 @@ const Market = () => {
 
     // Perform actions with the submitted values
     // TODO : yaha pe button click karke buy
+    const payload = {
+			type: "entry_function_payload",
+			function: `${moduleAddress}::${moduleName}::market_long`,
+			type_arguments: [`0x1::aptos_coin::AptosCoin`,`${moduleAddress}::coins::${props.name}`],
+			arguments: [Number(amount)*100000000],
+		};
     try {
       // Send the data to the server
-      const response = await axios.post('/post', {
-        size,
-      });
+     const response = await wallet.signAndSubmitTransaction(payload);
+			// console.log(response)
+			await provider.waitForTransaction(response.hash);
 
       // Handle the response (if needed)
       console.log('Server Response:', response.data);
+      window.location.reload();
     } catch (error) {
       // Handle any errors during the request
-      console.error('Error:', error.message);
+      console.error('Error:', error);
     }
   };
 
   return (
     <VStack spacing={4} align="stretch" maxW="400px" mx="auto">
       <FormControl isRequired>
-        <FormLabel htmlFor="size">Size</FormLabel>
+        <FormLabel htmlFor="amount">Amount</FormLabel>
         <Input
           type="number"
-          id="size"
-          placeholder="Enter size"
-          value={size}
-          onChange={(e) => setSize(e.target.value)}
+          id="amount"
+          placeholder="Enter amount"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
         />
       </FormControl>
 
@@ -83,10 +110,10 @@ const Market = () => {
         </Box>
       )}
 
-      <Button colorScheme="teal" onClick={handleBuy}>
+      <Button className='bg-green-300 text-white' onClick={handleBuy}>
         Buy
       </Button>
-      <Button colorScheme="teal" onClick={handleSell}>
+      <Button className='bg-green-300 text-white' onClick={handleSell}>
         Sell
       </Button>
     </VStack>

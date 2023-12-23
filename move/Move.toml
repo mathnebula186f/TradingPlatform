@@ -4,8 +4,10 @@ version = "1.0.0"
 authors = []
 
 [addresses]
-publisher_addr = "0xfcb48b0167d6c03f20fb227cf9cf02c5269a1439b6598a69886ae4e799aea7d6"
-resource_account = "0x352b9127a0ffea9c45ad7faebc9ea88c2df5b2e35b1a5018d658159a135a2ef9"
+publisher_addr = "0x905f45c57a17a8279d91c531e86b16f53bbbc59ce35ad6ffbf357e97c0547809"
+resource_account = "0x5ee007992ae8b720030c92f3fa5eb94be806858967a3359f99224e6bca65b7b1"
+# publisher_addr = "0xfcb48b0167d6c03f20fb227cf9cf02c5269a1439b6598a69886ae4e799aea7d6"
+# resource_account = "0x352b9127a0ffea9c45ad7faebc9ea88c2df5b2e35b1a5018d658159a135a2ef9"
 
 [dev-addresses]
 

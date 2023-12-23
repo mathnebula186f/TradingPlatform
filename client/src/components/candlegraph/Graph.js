@@ -2,6 +2,7 @@ import ReactApexChart from 'react-apexcharts';
 import { constOptions } from './constOptions';
 
 const Graph = (props) => {  
+  console.log("here are the props in graph.js=",props.data);
   return (
     <ReactApexChart 
         series={
